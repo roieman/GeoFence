@@ -1,0 +1,47 @@
+{
+  "mappings": {
+    "dynamic": false,
+    "fields": {
+      "name": [
+        {
+          "type": "autocomplete",
+          "tokenization": "edgeGram",
+          "minGrams": 2,
+          "maxGrams": 15,
+          "foldDiacritics": false
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "city": [
+        {
+          "type": "autocomplete",
+          "tokenization": "edgeGram",
+          "minGrams": 2,
+          "maxGrams": 15,
+          "foldDiacritics": false
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "country": [
+        {
+          "type": "autocomplete",
+          "tokenization": "edgeGram",
+          "minGrams": 2,
+          "maxGrams": 15,
+          "foldDiacritics": false
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "type": {
+        "type": "string"
+      }
+    }
+  }
+}
+
