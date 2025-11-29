@@ -25,10 +25,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# MongoDB connection
-connection_string = os.getenv("MONGODB_URI")
+# MongoDB connection - Support DEBUG mode for localhost
+DEBUG_MODE = os.getenv("DEBUG", "false").lower() in ("true", "1", "yes")
+
+if DEBUG_MODE:
+    # In DEBUG mode, always use localhost MongoDB (ignore MONGODB_URI from .env)
+    connection_string = "mongodb://localhost:27017/"
+    print("🔧 DEBUG MODE: Using localhost MongoDB")
+    print(f"   Connection: {connection_string}")
+    print("   (MONGODB_URI from .env is ignored in DEBUG mode)")
+else:
+    # Use Atlas or configured MongoDB
+    connection_string = os.getenv("MONGODB_URI")
+    if not connection_string:
+        raise ValueError("MONGODB_URI environment variable not set (or set DEBUG=true for localhost)")
+
 if not connection_string:
-    raise ValueError("MONGODB_URI environment variable not set")
+    raise ValueError("MongoDB connection string not configured")
 
 client = MongoClient(connection_string)
 db = client["geofence"]
@@ -36,6 +49,11 @@ containers = db["containers_regular"]  # Regular collection (not TimeSeries)
 containers_timeseries = db["containers"]  # TimeSeries collection
 locations = db["locations"]
 alerts = db["alerts"]
+
+# Log connection info
+if DEBUG_MODE:
+    print(f"   Database: {db.name}")
+    print(f"   Collections: {db.list_collection_names()}")
 
 
 class JSONEncoder(json.JSONEncoder):
@@ -236,24 +254,43 @@ async def get_locations(
     location_type: Optional[str] = Query(None),
     limit: int = Query(10, ge=1, le=500)  # Default to 10 for autocomplete
 ):
-    """Get list of locations with Atlas Search autocomplete support."""
+    """Get list of locations with Atlas Search autocomplete support (disabled in DEBUG mode)."""
     try:
-        # If no search query, return first 10 locations from DB
+        # If no search query, return first locations from DB
         if not search:
             query = {}
             if location_type:
                 query["type"] = location_type
             results = list(locations.find(query).limit(limit))
+            if DEBUG_MODE:
+                print(f"🔧 DEBUG: Returning {len(results)} locations from local DB (no search)")
             return {"locations": serialize_doc(results)}
         
-        # If search query provided, use Atlas Search autocomplete
+        # If search query provided
         if search:
-            # Use Atlas Search with autocomplete
-            # Note: The search index name should match what you created in Atlas
+            # In DEBUG mode, skip Atlas Search and use regex queries only
+            if DEBUG_MODE:
+                print(f"🔧 DEBUG: Using regex search (Atlas Search disabled in DEBUG mode)")
+                query = {
+                    "$or": [
+                        {"name": {"$regex": search, "$options": "i"}},
+                        {"city": {"$regex": search, "$options": "i"}},
+                        {"country": {"$regex": search, "$options": "i"}}
+                    ]
+                }
+                
+                if location_type:
+                    query["type"] = location_type
+                
+                cursor = locations.find(query, {"name": 1, "type": 1, "city": 1, "country": 1, "location": 1}).limit(limit)
+                results = list(cursor)
+                print(f"🔧 DEBUG: Found {len(results)} locations matching '{search}'")
+                return {"locations": serialize_doc(results)}
+            
+            # Production mode: Use Atlas Search with autocomplete
             search_index_name = "default"
             
             # Build the search aggregation pipeline
-            # Use compound query for multiple fields - this matches the working test
             pipeline = [
                 {
                     "$search": {
@@ -290,13 +327,11 @@ async def get_locations(
             try:
                 results = list(locations.aggregate(pipeline))
                 if results:
-                    # Check if results have searchScore (indicates Atlas Search was used)
                     has_search_score = any('score' in r for r in results)
                     if has_search_score:
                         print(f"✓ Using Atlas Search for query: '{search}'")
                     return {"locations": serialize_doc(results)}
                 else:
-                    # No results from Atlas Search, try fallback
                     raise Exception("No results from Atlas Search")
             except Exception as search_error:
                 # Fallback to regex if Atlas Search is not available

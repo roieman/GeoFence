@@ -76,8 +76,18 @@ pip install -r requirements.txt
 pip install -r app/backend/requirements.txt
 
 # Create .env file with MongoDB connection string
+# Option 1: Use MongoDB Atlas (production)
 echo "MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority" > .env
+
+# Option 2: Use localhost MongoDB (debug mode)
+echo "DEBUG=true" > .env
+echo "MONGODB_URI=mongodb://localhost:27017" >> .env
 ```
+
+**Debug Mode:**
+- Set `DEBUG=true` in your `.env` file to use localhost MongoDB
+- When DEBUG is enabled, the app will use `mongodb://localhost:27017` by default
+- Useful for local development without Atlas
 
 ### 3. Frontend Setup
 
