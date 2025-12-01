@@ -8,6 +8,8 @@ from pymongo import MongoClient
 from datetime import datetime, timedelta
 from typing import Optional, List
 import os
+import subprocess
+import signal
 from dotenv import load_dotenv
 from bson import ObjectId
 import json
@@ -43,12 +45,23 @@ else:
 if not connection_string:
     raise ValueError("MongoDB connection string not configured")
 
-client = MongoClient(connection_string)
+# Configure MongoDB client with timeouts to prevent hanging
+client = MongoClient(
+    connection_string,
+    serverSelectionTimeoutMS=5000,  # 5 seconds to select server
+    connectTimeoutMS=10000,  # 10 seconds to connect
+    socketTimeoutMS=300000,  # 5 minutes for operations (for long queries)
+    maxPoolSize=50,
+    retryWrites=True
+)
 db = client["geofence"]
 containers = db["containers_regular"]  # Regular collection (not TimeSeries)
 containers_timeseries = db["containers"]  # TimeSeries collection
 locations = db["locations"]
 alerts = db["alerts"]
+
+# Alert generation process management
+alert_generation_process = None
 
 # Log connection info
 if DEBUG_MODE:
@@ -325,7 +338,8 @@ async def get_locations(
                 pipeline.insert(-1, {"$match": {"type": location_type}})
             
             try:
-                results = list(locations.aggregate(pipeline))
+                # Add timeout to prevent hanging (10 seconds max for search)
+                results = list(locations.aggregate(pipeline, maxTimeMS=10000))
                 if results:
                     has_search_score = any('score' in r for r in results)
                     if has_search_score:
@@ -497,7 +511,8 @@ async def get_containers_at_location(
         # Execute aggregation and measure time
         import time
         start_time = time.time()
-        results = list(containers.aggregate(pipeline))
+        # Add timeout to prevent hanging (30 seconds max)
+        results = list(containers.aggregate(pipeline, maxTimeMS=30000))
         query_time = time.time() - start_time
         
         # Get total count (separate aggregation without skip/limit)
@@ -523,7 +538,8 @@ async def get_containers_at_location(
         
         count_start_time = time.time()
         try:
-            count_result = list(containers.aggregate(count_pipeline))
+            # Add timeout to prevent hanging (30 seconds max)
+            count_result = list(containers.aggregate(count_pipeline, maxTimeMS=30000))
             total = count_result[0]["total"] if count_result else len(results)
         except Exception as e:
             # Fallback: count distinct container IDs from results
@@ -557,7 +573,28 @@ async def get_containers_at_location(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        error_trace = traceback.format_exc()
+        error_msg = str(e)
+        
+        # Provide more specific error messages
+        if "timeout" in error_msg.lower() or "maxTimeMS" in error_msg:
+            raise HTTPException(
+                status_code=504,
+                detail="Query timeout. The search is taking too long. Try reducing the radius or date range."
+            )
+        elif "index" in error_msg.lower():
+            raise HTTPException(
+                status_code=500,
+                detail="Database index error. Please contact support."
+            )
+        else:
+            print(f"Error in container search: {error_msg}")
+            print(f"Traceback: {error_trace}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Search error: {error_msg[:200]}"  # Limit error message length
+            )
 
 
 @app.get("/api/locations/{location_name}/containers/timeseries")
@@ -700,7 +737,8 @@ async def get_containers_at_location_timeseries(
         import time
         start_time = time.time()
         try:
-            results = list(containers_timeseries.aggregate(pipeline))
+            # Add timeout to prevent hanging (30 seconds max)
+            results = list(containers_timeseries.aggregate(pipeline, maxTimeMS=30000))
         except Exception as agg_error:
             import traceback
             error_trace = traceback.format_exc()
@@ -733,7 +771,8 @@ async def get_containers_at_location_timeseries(
         
         count_start_time = time.time()
         try:
-            count_result = list(containers_timeseries.aggregate(count_pipeline))
+            # Add timeout to prevent hanging (30 seconds max)
+            count_result = list(containers_timeseries.aggregate(count_pipeline, maxTimeMS=30000))
             total = count_result[0]["total"] if count_result else len(results)
         except Exception as e:
             # Fallback: count distinct container IDs from results
@@ -770,22 +809,47 @@ async def get_containers_at_location_timeseries(
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
-        print(f"Error in TimeSeries container search: {str(e)}")
-        print(f"Traceback: {error_trace}")
-        raise HTTPException(status_code=500, detail=f"TimeSeries search error: {str(e)}")
+        error_msg = str(e)
+        
+        # Provide more specific error messages
+        if "timeout" in error_msg.lower() or "maxTimeMS" in error_msg:
+            raise HTTPException(
+                status_code=504,
+                detail="Query timeout. The search is taking too long. Try reducing the radius or date range."
+            )
+        elif "index" in error_msg.lower():
+            raise HTTPException(
+                status_code=500,
+                detail="Database index error. Please contact support."
+            )
+        else:
+            print(f"Error in TimeSeries container search: {error_msg}")
+            print(f"Traceback: {error_trace}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"TimeSeries search error: {error_msg[:200]}"  # Limit error message length
+            )
 
 
 @app.get("/api/stats")
 async def get_stats():
     """Get general statistics."""
     try:
-        total_containers = containers.distinct("metadata.container_id")
+        # Use aggregation instead of distinct() to avoid 16MB limit
+        # Count distinct container IDs using aggregation
+        container_count_pipeline = [
+            {"$group": {"_id": "$metadata.container_id"}},
+            {"$count": "total"}
+        ]
+        container_count_result = list(containers.aggregate(container_count_pipeline, maxTimeMS=30000))
+        total_containers = container_count_result[0]["total"] if container_count_result else 0
+        
         total_alerts = alerts.count_documents({})
         unacknowledged_alerts = alerts.count_documents({"acknowledged": False})
         total_locations = locations.count_documents({})
         
         return {
-            "total_containers": len(total_containers),
+            "total_containers": total_containers,
             "total_alerts": total_alerts,
             "unacknowledged_alerts": unacknowledged_alerts,
             "total_locations": total_locations
@@ -793,6 +857,123 @@ async def get_stats():
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/alert-generation/status")
+async def get_alert_generation_status():
+    """Get the status of alert generation."""
+    global alert_generation_process
+    is_running = False
+    
+    if alert_generation_process:
+        # Check if process is still running
+        poll_result = alert_generation_process.poll()
+        if poll_result is None:
+            is_running = True
+        else:
+            # Process has ended
+            alert_generation_process = None
+    
+    return {
+        "running": is_running,
+        "process_id": alert_generation_process.pid if alert_generation_process else None
+    }
+
+
+@app.post("/api/alert-generation/start")
+async def start_alert_generation():
+    """Start the alert generation script."""
+    global alert_generation_process
+    
+    # Check if already running
+    if alert_generation_process:
+        poll_result = alert_generation_process.poll()
+        if poll_result is None:
+            return {"success": False, "message": "Alert generation is already running"}
+        else:
+            # Process has ended, clean up
+            alert_generation_process = None
+    
+    try:
+        # Get the script path (go up from app/backend to root, then to generate_alerts.py)
+        backend_dir = os.path.dirname(__file__)
+        root_dir = os.path.dirname(os.path.dirname(backend_dir))
+        script_path = os.path.join(root_dir, "generate_alerts.py")
+        
+        if not os.path.exists(script_path):
+            return {
+                "success": False,
+                "message": f"Script not found at {script_path}"
+            }
+        
+        # Start the process (redirect output to log file for debugging)
+        log_file_path = "/tmp/alert_generation.log"
+        # Open in append mode and keep reference
+        log_file = open(log_file_path, "a", buffering=1)  # Line buffered
+        log_file.write(f"\n{'='*60}\n")
+        log_file.write(f"Alert generation started at {datetime.utcnow()}\n")
+        log_file.write(f"Process will be started with PID tracking\n")
+        log_file.write(f"{'='*60}\n")
+        log_file.flush()
+        
+        # Use unbuffered output and ensure Python output is flushed
+        alert_generation_process = subprocess.Popen(
+            ["python3", "-u", script_path],  # -u flag for unbuffered output
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            cwd=root_dir,
+            start_new_session=True,  # Start in new session to detach from parent
+            env=dict(os.environ, PYTHONUNBUFFERED="1")  # Force unbuffered
+        )
+        
+        # Write process info to log
+        log_file.write(f"Process started with PID: {alert_generation_process.pid}\n")
+        log_file.flush()
+        
+        # Store file handle in a way that won't be garbage collected
+        # Note: We can't easily keep it open, but the process should keep writing
+        
+        return {
+            "success": True,
+            "message": "Alert generation started",
+            "process_id": alert_generation_process.pid
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Failed to start alert generation: {str(e)}"
+        }
+
+
+@app.post("/api/alert-generation/stop")
+async def stop_alert_generation():
+    """Stop the alert generation script."""
+    global alert_generation_process
+    
+    if not alert_generation_process:
+        return {"success": False, "message": "Alert generation is not running"}
+    
+    try:
+        # Try graceful termination first
+        alert_generation_process.terminate()
+        
+        # Wait a bit for graceful shutdown
+        try:
+            alert_generation_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            # Force kill if it doesn't stop
+            alert_generation_process.kill()
+            alert_generation_process.wait()
+        
+        alert_generation_process = None
+        return {"success": True, "message": "Alert generation stopped"}
+    except Exception as e:
+        # Clean up even if there's an error
+        alert_generation_process = None
+        return {
+            "success": False,
+            "message": f"Error stopping alert generation: {str(e)}"
+        }
 
 
 if __name__ == "__main__":

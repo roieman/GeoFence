@@ -132,7 +132,7 @@ def process_new_container(
 def monitor_containers(
     connection_string: str = None,
     database_name: str = "geofence",
-    containers_collection: str = "containers",
+    containers_collection: str = "containers_regular",  # Changed default to containers_regular
     locations_collection: str = "locations",
     alerts_collection: str = "alerts"
 ):
@@ -193,7 +193,7 @@ def check_existing_container(
     container_id: str,
     connection_string: str = None,
     database_name: str = "geofence",
-    containers_collection: str = "containers",
+    containers_collection: str = "containers_regular",  # Changed default to containers_regular
     locations_collection: str = "locations",
     alerts_collection: str = "alerts"
 ):
@@ -258,8 +258,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--containers-collection",
         type=str,
-        default="containers",
-        help="Containers collection name (default: containers)"
+        default="containers_regular",
+        help="Containers collection name (default: containers_regular)"
     )
     parser.add_argument(
         "--locations-collection",

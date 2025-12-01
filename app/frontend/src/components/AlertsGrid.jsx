@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react'
-import { alertsAPI } from '../services/api'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { alertsAPI, alertGenerationAPI } from '../services/api'
 import { format } from 'date-fns'
 
 function AlertsGrid() {
@@ -14,6 +14,19 @@ function AlertsGrid() {
     end_date: ''
   })
   const [pagination, setPagination] = useState({ page: 1, limit: 50, total: 0, pages: 0 })
+  const [alertGenerationRunning, setAlertGenerationRunning] = useState(false)
+  const [alertGenerationLoading, setAlertGenerationLoading] = useState(false)
+  const alertStatusIntervalRef = useRef(null)
+
+  // Check alert generation status
+  const checkAlertGenerationStatus = useCallback(async () => {
+    try {
+      const response = await alertGenerationAPI.getStatus()
+      setAlertGenerationRunning(response.data.running || false)
+    } catch (err) {
+      console.error('Failed to check alert generation status:', err)
+    }
+  }, [])
 
   const loadAlerts = async (page = 1) => {
     setLoading(true)
@@ -36,7 +49,17 @@ function AlertsGrid() {
 
   useEffect(() => {
     loadAlerts(1)
-  }, [])
+    checkAlertGenerationStatus()
+    
+    // Poll alert generation status every 2 seconds
+    alertStatusIntervalRef.current = setInterval(checkAlertGenerationStatus, 2000)
+    
+    return () => {
+      if (alertStatusIntervalRef.current) {
+        clearInterval(alertStatusIntervalRef.current)
+      }
+    }
+  }, [checkAlertGenerationStatus])
 
   const handleFilterChange = (key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }))
@@ -59,8 +82,58 @@ function AlertsGrid() {
     loadAlerts(newPage)
   }
 
+  const handleToggleAlertGeneration = useCallback(async () => {
+    setAlertGenerationLoading(true)
+    try {
+      if (alertGenerationRunning) {
+        await alertGenerationAPI.stop()
+        setAlertGenerationRunning(false)
+      } else {
+        await alertGenerationAPI.start()
+        setAlertGenerationRunning(true)
+      }
+      // Refresh alerts after starting/stopping
+      loadAlerts(pagination.page)
+    } catch (err) {
+      console.error('Failed to toggle alert generation:', err)
+      alert(err.response?.data?.message || 'Failed to toggle alert generation')
+    } finally {
+      setAlertGenerationLoading(false)
+    }
+  }, [alertGenerationRunning, pagination.page])
+
   return (
     <div>
+      {/* Alert Generation Control */}
+      <div className="card" style={{ marginBottom: '1rem', backgroundColor: '#f9f9f9' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Alert Generation</h3>
+            <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.9em', color: '#666' }}>
+              {alertGenerationRunning 
+                ? 'Generating 10 containers/second with alerts every 10th container'
+                : 'Alert generation is stopped'}
+            </p>
+          </div>
+          <button
+            className="btn btn-primary"
+            onClick={handleToggleAlertGeneration}
+            disabled={alertGenerationLoading}
+            style={{ 
+              minWidth: '120px',
+              backgroundColor: alertGenerationRunning ? '#dc3545' : undefined,
+              borderColor: alertGenerationRunning ? '#dc3545' : undefined
+            }}
+          >
+            {alertGenerationLoading 
+              ? '...' 
+              : alertGenerationRunning 
+                ? 'Stop Generation' 
+                : 'Start Generation'}
+          </button>
+        </div>
+      </div>
+
       <div className="card">
         <h2>Alerts</h2>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>

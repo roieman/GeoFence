@@ -18,34 +18,86 @@ function LocationSearch() {
   const [showMap, setShowMap] = useState(false)
   const [locationData, setLocationData] = useState(null)
   const [hasSearched, setHasSearched] = useState(false)
-  const [collectionType, setCollectionType] = useState('regular') // 'regular' or 'timeseries'
-  const [queryTime, setQueryTime] = useState(null) // Query execution time in ms
+  const [collectionType, setCollectionType] = useState('regular')
+  const [queryTime, setQueryTime] = useState(null)
+  const [error, setError] = useState(null)
+  
+  // Refs for cleanup and request management
   const autocompleteRef = useRef(null)
   const searchTimeoutRef = useRef(null)
+  const abortControllerRef = useRef(null)
+  const locationSearchAbortRef = useRef(null)
+  const pendingRequestRef = useRef(null)
+
+  // Cleanup function
+  const cleanup = useCallback(() => {
+    // Cancel any pending requests
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+    if (locationSearchAbortRef.current) {
+      locationSearchAbortRef.current.abort()
+      locationSearchAbortRef.current = null
+    }
+    // Clear timeouts
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current)
+      searchTimeoutRef.current = null
+    }
+    // Clear pending request flag
+    pendingRequestRef.current = null
+  }, [])
 
   const loadInitialLocations = useCallback(async () => {
+    // Cancel any pending location search
+    if (locationSearchAbortRef.current) {
+      locationSearchAbortRef.current.abort()
+    }
+    
+    locationSearchAbortRef.current = new AbortController()
+    const signal = locationSearchAbortRef.current.signal
+    
     setLoadingLocations(true)
+    setError(null)
+    
     try {
       const response = await locationsAPI.getAll(null, null, 10)
+      
+      // Check if request was aborted
+      if (signal.aborted) return
+      
       const locations = response.data?.locations || []
       setAutocompleteResults(locations)
-      // Show autocomplete if we have results
       if (locations.length > 0) {
         setShowAutocomplete(true)
       }
     } catch (err) {
+      // Don't set error if request was aborted
+      if (err.name === 'AbortError' || signal.aborted) {
+        return
+      }
       console.error('Failed to load initial locations:', err)
+      setError('Failed to load locations. Please try again.')
       setAutocompleteResults([])
       setShowAutocomplete(false)
     } finally {
-      setLoadingLocations(false)
+      if (!signal.aborted) {
+        setLoadingLocations(false)
+      }
+      locationSearchAbortRef.current = null
     }
   }, [])
 
-  // Load initial 10 locations on mount
+  // Load initial locations on mount
   useEffect(() => {
     loadInitialLocations()
-  }, [loadInitialLocations])
+    
+    // Cleanup on unmount
+    return () => {
+      cleanup()
+    }
+  }, [loadInitialLocations, cleanup])
 
   // Close autocomplete when clicking outside
   useEffect(() => {
@@ -61,29 +113,51 @@ function LocationSearch() {
   const searchLocations = useCallback(async (query) => {
     if (!query || query.length < 3) {
       if (query.length === 0) {
-        // If empty, load initial locations
         loadInitialLocations()
       }
       return
     }
 
+    // Cancel any pending location search
+    if (locationSearchAbortRef.current) {
+      locationSearchAbortRef.current.abort()
+    }
+    
+    locationSearchAbortRef.current = new AbortController()
+    const signal = locationSearchAbortRef.current.signal
+
     setLoadingLocations(true)
+    setError(null)
+    
     try {
       const response = await locationsAPI.getAll(query, null, 10)
+      
+      // Check if request was aborted
+      if (signal.aborted) return
+      
       const locations = response.data?.locations || []
       setAutocompleteResults(locations)
       setShowAutocomplete(true)
     } catch (err) {
+      // Don't set error if request was aborted
+      if (err.name === 'AbortError' || signal.aborted) {
+        return
+      }
       console.error('Failed to search locations:', err)
+      setError('Failed to search locations. Please try again.')
       setAutocompleteResults([])
     } finally {
-      setLoadingLocations(false)
+      if (!signal.aborted) {
+        setLoadingLocations(false)
+      }
+      locationSearchAbortRef.current = null
     }
   }, [loadInitialLocations])
 
   const handleSearchTextChange = (e) => {
     const value = e.target.value
     setSearchText(value)
+    setError(null)
     
     // Clear selected location when typing
     if (value !== selectedLocation?.name) {
@@ -119,22 +193,37 @@ function LocationSearch() {
     setShowAutocomplete(false)
     setContainers([])
     setHasSearched(false)
+    setError(null)
   }
 
-  // Check if location is a polygon (radius should be disabled)
-  // Check both location.location.type and response geometry_type
   const isPolygon = selectedLocation?.location?.type === "Polygon"
 
-  const handleSearch = async (page = 1, useTimeSeries = false) => {
+  const handleSearch = useCallback(async (page = 1) => {
     if (!selectedLocation) {
-      alert('Please select a location')
+      setError('Please select a location first')
       return
     }
     
+    // Cancel any pending search
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    
+    // Prevent duplicate requests
+    if (pendingRequestRef.current) {
+      console.log('Search already in progress, skipping duplicate request')
+      return
+    }
+    
+    abortControllerRef.current = new AbortController()
+    const signal = abortControllerRef.current.signal
+    pendingRequestRef.current = true
+    
     const locationName = selectedLocation.name
-    setCollectionType(useTimeSeries ? 'timeseries' : 'regular')
-
+    setCollectionType('regular')
     setLoading(true)
+    setError(null)
+    
     try {
       const params = {
         start_date: startDate || undefined,
@@ -144,39 +233,37 @@ function LocationSearch() {
         limit: pagination.limit
       }
       
-      const response = useTimeSeries
-        ? await locationsAPI.getContainersTimeSeries(
-            locationName,
-            params.start_date,
-            params.end_date,
-            params.radius_meters,
-            params.page,
-            params.limit
-          )
-        : await locationsAPI.getContainers(
-            locationName,
-            params.start_date,
-            params.end_date,
-            params.radius_meters,
-            params.page,
-            params.limit
-          )
+      const apiCall = locationsAPI.getContainers(
+        locationName,
+        params.start_date,
+        params.end_date,
+        params.radius_meters,
+        params.page,
+        params.limit
+      )
       
-      setContainers(response.data.containers)
-      setPagination(response.data.pagination)
+      const response = await apiCall
+      
+      // Check if request was aborted
+      if (signal.aborted) return
+      
+      // Validate response
+      if (!response || !response.data) {
+        throw new Error('Invalid response from server')
+      }
+      
+      setContainers(response.data.containers || [])
+      setPagination(response.data.pagination || { page: 1, limit: 100, total: 0, pages: 0 })
       setHasSearched(true)
       
-      // Store query execution time
       if (response.data.query_time_ms !== undefined) {
         setQueryTime(response.data.query_time_ms)
       } else {
         setQueryTime(null)
       }
       
-      // Store location data for map
       setLocationData(response.data.location)
       
-      // Update selected location with geometry type from response if available
       if (response.data.location?.geometry_type && selectedLocation) {
         setSelectedLocation(prev => ({
           ...prev,
@@ -187,22 +274,45 @@ function LocationSearch() {
         }))
       }
     } catch (err) {
+      // Don't set error if request was aborted
+      if (err.name === 'AbortError' || signal.aborted) {
+        return
+      }
+      
       console.error('Failed to search containers:', err)
-      alert(err.response?.data?.detail || 'Failed to search containers')
+      
+      // Provide user-friendly error messages
+      let errorMessage = 'Failed to search containers'
+      if (err.response?.status === 404) {
+        errorMessage = 'Location not found'
+      } else if (err.response?.status === 400) {
+        errorMessage = err.response?.data?.detail || 'Invalid search parameters'
+      } else if (err.response?.status === 500) {
+        errorMessage = 'Server error. Please try again later.'
+      } else if (err.message === 'Network Error' || err.code === 'ECONNABORTED') {
+        errorMessage = 'Request timed out. The search may be taking too long. Please try with a smaller radius or date range.'
+      } else if (err.response?.data?.detail) {
+        errorMessage = err.response.data.detail
+      }
+      
+      setError(errorMessage)
+      setContainers([])
+      setHasSearched(true)
     } finally {
-      setLoading(false)
+      if (!signal.aborted) {
+        setLoading(false)
+      }
+      abortControllerRef.current = null
+      pendingRequestRef.current = null
     }
-  }
+  }, [selectedLocation, startDate, endDate, radius, pagination.limit])
 
-  const handleSearchTimeSeries = async (page = 1) => {
-    await handleSearch(page, true)
-  }
+  const handlePageChange = useCallback((newPage) => {
+    handleSearch(newPage)
+  }, [handleSearch])
 
-  const handlePageChange = (newPage) => {
-    handleSearch(newPage, collectionType === 'timeseries')
-  }
-
-  const handleClear = () => {
+  const handleClear = useCallback(() => {
+    cleanup()
     setSearchText('')
     setSelectedLocation(null)
     setStartDate('')
@@ -214,8 +324,9 @@ function LocationSearch() {
     setShowAutocomplete(false)
     setCollectionType('regular')
     setQueryTime(null)
+    setError(null)
     loadInitialLocations()
-  }
+  }, [cleanup, loadInitialLocations])
 
   const getLocationDisplayName = (location) => {
     const city = location.city || 'N/A'
@@ -230,6 +341,38 @@ function LocationSearch() {
         <p style={{ color: '#666', marginBottom: '1rem' }}>
           Search for a location by name, city, or country. Type at least 3 characters to see autocomplete suggestions.
         </p>
+        
+        {/* Error message display */}
+        {error && (
+          <div style={{
+            padding: '12px',
+            backgroundColor: '#fee',
+            border: '1px solid #fcc',
+            borderRadius: '4px',
+            marginBottom: '1rem',
+            color: '#c33',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}>
+            <span>{error}</span>
+            <button
+              onClick={() => setError(null)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#c33',
+                cursor: 'pointer',
+                fontSize: '18px',
+                padding: '0 8px'
+              }}
+              title="Dismiss error"
+            >
+              ×
+            </button>
+          </div>
+        )}
+        
         <div className="form-group" style={{ position: 'relative' }} ref={autocompleteRef}>
           <label className="form-label">Location</label>
           <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
@@ -242,31 +385,33 @@ function LocationSearch() {
                 if (autocompleteResults.length > 0) {
                   setShowAutocomplete(true)
                 } else if (searchText.length === 0) {
-                  // If empty and no results, load initial locations
                   loadInitialLocations()
                 }
               }}
               placeholder="Type to search locations..."
-              disabled={loadingLocations}
+              disabled={loadingLocations || loading}
               style={{ flex: 1, paddingRight: searchText ? '40px' : '10px' }}
             />
             {searchText && (
               <button
                 type="button"
                 onClick={() => {
+                  cleanup()
                   setSearchText('')
                   setSelectedLocation(null)
                   setShowAutocomplete(false)
                   setContainers([])
                   setHasSearched(false)
+                  setError(null)
                   loadInitialLocations()
                 }}
+                disabled={loadingLocations || loading}
                 style={{
                   position: 'absolute',
                   right: '8px',
                   background: 'none',
                   border: 'none',
-                  cursor: 'pointer',
+                  cursor: loadingLocations || loading ? 'not-allowed' : 'pointer',
                   fontSize: '18px',
                   color: '#999',
                   padding: '0',
@@ -358,6 +503,7 @@ function LocationSearch() {
               className="input"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
+              disabled={loading}
             />
           </div>
           <div className="form-group">
@@ -367,6 +513,7 @@ function LocationSearch() {
               className="input"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
+              disabled={loading}
             />
           </div>
         </div>
@@ -384,7 +531,7 @@ function LocationSearch() {
             onChange={(e) => setRadius(parseInt(e.target.value) || 10000)}
             min="0"
             step="1000"
-            disabled={isPolygon}
+            disabled={isPolygon || loading}
             style={{
               backgroundColor: isPolygon ? '#f5f5f5' : 'white',
               cursor: isPolygon ? 'not-allowed' : 'text'
@@ -394,18 +541,10 @@ function LocationSearch() {
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <button 
             className="btn btn-primary" 
-            onClick={() => handleSearch(1, false)} 
-            disabled={loading || !selectedLocation}
+            onClick={() => handleSearch(1)} 
+            disabled={loading || !selectedLocation || loadingLocations}
           >
-            {loading && collectionType === 'regular' ? 'Searching...' : 'Search Containers (Regular)'}
-          </button>
-          <button 
-            className="btn btn-primary" 
-            onClick={() => handleSearchTimeSeries(1)} 
-            disabled={loading || !selectedLocation}
-            style={{ backgroundColor: '#9c27b0' }}
-          >
-            {loading && collectionType === 'timeseries' ? 'Searching...' : 'Search Containers (TimeSeries)'}
+            {loading ? 'Searching...' : 'Search'}
           </button>
           <button 
             className="btn btn-secondary" 
@@ -418,6 +557,7 @@ function LocationSearch() {
             <button 
               className="btn btn-secondary" 
               onClick={() => setShowMap(true)}
+              disabled={loading}
             >
               View on Map
             </button>
@@ -425,7 +565,7 @@ function LocationSearch() {
         </div>
       </div>
 
-      {hasSearched && !loading && containers.length === 0 && (
+      {hasSearched && !loading && containers.length === 0 && !error && (
         <div className="card">
           <div style={{ 
             padding: '2rem', 
@@ -446,32 +586,44 @@ function LocationSearch() {
             </p>
             {queryTime !== null && (
               <p style={{ marginTop: '1rem', fontSize: '0.9em', color: '#999' }}>
-                Query executed in <strong>{queryTime}ms</strong> ({collectionType === 'timeseries' ? 'TimeSeries' : 'Regular'} collection)
+                Query executed in <strong>{queryTime}ms</strong>
               </p>
             )}
           </div>
         </div>
       )}
 
-      {containers.length > 0 && (
+      {loading && (
+        <div className="card">
+          <div style={{ 
+            padding: '2rem', 
+            textAlign: 'center',
+            color: '#666'
+          }}>
+            <p>Searching for containers...</p>
+            <p style={{ fontSize: '0.9em', color: '#999', marginTop: '0.5rem' }}>
+              This may take a few moments. Please wait.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {containers.length > 0 && !loading && (
         <div className="card">
           <div style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <p style={{ margin: 0 }}>Found {pagination.total} containers</p>
-              <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.9em', color: '#666' }}>
-                Collection: <strong>{collectionType === 'timeseries' ? 'TimeSeries' : 'Regular'}</strong>
-                {queryTime !== null && (
-                  <span style={{ marginLeft: '1rem' }}>
-                    | Query time: <strong style={{ color: '#1976d2' }}>{queryTime}ms</strong>
-                  </span>
-                )}
-              </p>
+              {queryTime !== null && (
+                <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.9em', color: '#666' }}>
+                  Query time: <strong style={{ color: '#1976d2' }}>{queryTime}ms</strong>
+                </p>
+              )}
             </div>
             <div>
               <button
                 className="btn btn-secondary"
                 onClick={() => handlePageChange(pagination.page - 1)}
-                disabled={pagination.page === 1}
+                disabled={pagination.page === 1 || loading}
               >
                 Previous
               </button>
@@ -481,7 +633,7 @@ function LocationSearch() {
               <button
                 className="btn btn-secondary"
                 onClick={() => handlePageChange(pagination.page + 1)}
-                disabled={pagination.page >= pagination.pages}
+                disabled={pagination.page >= pagination.pages || loading}
               >
                 Next
               </button>

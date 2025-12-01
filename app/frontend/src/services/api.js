@@ -10,6 +10,20 @@ const api = axios.create({
   timeout: 300000 // 5 minute timeout (300000ms)
 })
 
+// Request interceptor for better error handling
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    // Handle network errors
+    if (error.code === 'ECONNABORTED') {
+      error.message = 'Request timeout. The operation took too long.'
+    } else if (!error.response) {
+      error.message = 'Network error. Please check your connection.'
+    }
+    return Promise.reject(error)
+  }
+)
+
 export const containerAPI = {
   track: (containerId, startDate, endDate) => {
     const params = {}
@@ -55,6 +69,18 @@ export const locationsAPI = {
 export const statsAPI = {
   get: () => {
     return api.get('/stats')
+  }
+}
+
+export const alertGenerationAPI = {
+  getStatus: () => {
+    return api.get('/alert-generation/status')
+  },
+  start: () => {
+    return api.post('/alert-generation/start')
+  },
+  stop: () => {
+    return api.post('/alert-generation/stop')
   }
 }
 
