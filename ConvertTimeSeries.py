@@ -1,9 +1,16 @@
 import time
+import os
 from datetime import datetime, timedelta
 from pymongo import MongoClient
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # --- CONFIGURATION ---
-MONGO_URI = "mongodb+srv://main_user:Rm8252078@democluster.iv8lf.mongodb.net/?appName=DemoCluster" # Update with your connection string
+# Get MongoDB URI from environment variable
+MONGO_URI = os.getenv("MONGODB_URI")
+if not MONGO_URI:
+    raise ValueError("MONGODB_URI environment variable not set. Please set it in your .env file or environment.")
 DB_NAME = "geofence"
 SOURCE_COLL = "containers"
 TARGET_COLL = "containers_regular"
