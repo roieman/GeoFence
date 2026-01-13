@@ -2,7 +2,7 @@
 FastAPI backend for GeoFence container tracking application.
 """
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo import MongoClient
 from datetime import datetime, timedelta
@@ -13,6 +13,7 @@ import signal
 from dotenv import load_dotenv
 from bson import ObjectId
 import json
+from app.backend.potential_locations_service import PotentialLocationsService
 
 load_dotenv()
 
@@ -59,6 +60,20 @@ containers = db["containers_regular"]  # Regular collection (not TimeSeries)
 containers_timeseries = db["containers"]  # TimeSeries collection
 locations = db["locations"]
 alerts = db["alerts"]
+potential_locations = db["potential_locations"]
+
+# Initialize potential locations service
+potential_locations_service = PotentialLocationsService(db)
+
+# Create indexes for potential_locations collection
+try:
+    potential_locations.create_index([("location", "2dsphere")])
+    potential_locations.create_index("status")
+    potential_locations.create_index("confidence_score")
+    potential_locations.create_index("detected_at")
+except Exception as e:
+    # Indexes might already exist
+    pass
 
 # Alert generation process management
 alert_generation_process = None
@@ -974,6 +989,110 @@ async def stop_alert_generation():
             "success": False,
             "message": f"Error stopping alert generation: {str(e)}"
         }
+
+
+# Potential Locations API Endpoints
+
+@app.post("/api/potential-locations/detect")
+async def detect_potential_locations(
+    stop_radius_meters: float = Body(100, description="Radius to consider readings as same location (meters)"),
+    min_readings_per_stop: int = Body(3, description="Minimum readings to consider it a stop"),
+    min_unique_containers: int = Body(10, description="Minimum containers needed to create location"),
+    min_total_readings: int = Body(50, description="Minimum total readings across all containers"),
+    cluster_radius_meters: float = Body(500, description="Radius for clustering nearby stops (meters)"),
+    time_window_days: int = Body(30, description="Time window in days"),
+    min_confidence_score: float = Body(0.5, description="Minimum confidence score"),
+    use_timeseries: bool = Body(False, description="Use TimeSeries collection")
+):
+    """
+    Run detection algorithm to find potential new storage facilities.
+    """
+    try:
+        result = potential_locations_service.detect_potential_locations(
+            stop_radius_meters=stop_radius_meters,
+            min_readings_per_stop=min_readings_per_stop,
+            min_unique_containers=min_unique_containers,
+            min_total_readings=min_total_readings,
+            cluster_radius_meters=cluster_radius_meters,
+            time_window_days=time_window_days,
+            min_confidence_score=min_confidence_score,
+            use_timeseries=use_timeseries
+        )
+        return serialize_doc(result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/potential-locations")
+async def get_potential_locations(
+    status: Optional[str] = Query(None, description="Filter by status (pending_review, approved, rejected)"),
+    min_confidence: Optional[float] = Query(None, description="Minimum confidence score"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(100, ge=1, le=500)
+):
+    """
+    Get list of potential locations with filters.
+    """
+    try:
+        skip = (page - 1) * limit
+        result = potential_locations_service.get_potential_locations(
+            status=status,
+            min_confidence=min_confidence,
+            limit=limit,
+            skip=skip
+        )
+        
+        return {
+            "locations": serialize_doc(result["locations"]),
+            "pagination": {
+                "page": page,
+                "limit": limit,
+                "total": result["total"],
+                "pages": (result["total"] + limit - 1) // limit if result["total"] > 0 else 0
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/potential-locations/{location_id}/approve")
+async def approve_potential_location(location_id: str):
+    """
+    Approve a potential location and copy it to locations collection.
+    """
+    try:
+        result = potential_locations_service.approve_location(location_id)
+        return serialize_doc(result)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/potential-locations/{location_id}/reject")
+async def reject_potential_location(location_id: str):
+    """
+    Reject a potential location.
+    """
+    try:
+        result = potential_locations_service.reject_location(location_id)
+        return serialize_doc(result)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/potential-locations/stats")
+async def get_potential_locations_stats():
+    """
+    Get statistics about potential locations.
+    """
+    try:
+        stats = potential_locations_service.get_stats()
+        return serialize_doc(stats)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
