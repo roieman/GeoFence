@@ -78,6 +78,53 @@ export const geofencesAPI = {
 
   atPoint: (lon, lat) => {
     return api.get('/geofences/at-point', { params: { lon, lat } })
+  },
+
+  // Nested geofence (parent-child) operations
+  getChildren: (id) => {
+    return api.get(`/geofences/${id}/children`)
+  },
+
+  getHierarchy: (id) => {
+    return api.get(`/geofences/${id}/hierarchy`)
+  },
+
+  setParent: (id, parentId) => {
+    return api.put(`/geofences/${id}/parent`, { parentId })
+  }
+}
+
+// =============================================================================
+// CLUSTERS API (Geofence Groups)
+// =============================================================================
+
+export const clustersAPI = {
+  list: () => {
+    return api.get('/clusters')
+  },
+
+  get: (id) => {
+    return api.get(`/clusters/${id}`)
+  },
+
+  create: (cluster) => {
+    return api.post('/clusters', cluster)
+  },
+
+  update: (id, updates) => {
+    return api.put(`/clusters/${id}`, updates)
+  },
+
+  delete: (id) => {
+    return api.delete(`/clusters/${id}`)
+  },
+
+  addGeofences: (clusterId, geofenceIds) => {
+    return api.post(`/clusters/${clusterId}/geofences`, { geofenceIds })
+  },
+
+  removeGeofence: (clusterId, geofenceId) => {
+    return api.delete(`/clusters/${clusterId}/geofences/${geofenceId}`)
   }
 }
 
@@ -154,6 +201,98 @@ export const referenceAPI = {
 
   eventTypes: () => {
     return api.get('/reference/event-types')
+  },
+
+  iotProviders: () => {
+    return api.get('/reference/iot-providers')
+  },
+
+  userRoles: () => {
+    return api.get('/reference/user-roles')
+  }
+}
+
+// =============================================================================
+// AUTHENTICATION API
+// =============================================================================
+
+export const authAPI = {
+  register: (username, password, name, role = 'viewer') => {
+    return api.post('/auth/register', { username, password, name, role })
+  },
+
+  login: (username, password) => {
+    return api.post('/auth/login', { username, password })
+  },
+
+  me: () => {
+    return api.get('/auth/me')
+  },
+
+  listUsers: () => {
+    return api.get('/users')
+  },
+
+  updateUserRole: (userId, role) => {
+    return api.put(`/users/${userId}/role`, { role })
+  }
+}
+
+// =============================================================================
+// API KEYS API
+// =============================================================================
+
+export const apiKeysAPI = {
+  list: () => {
+    return api.get('/api-keys')
+  },
+
+  create: (name, role, description = '') => {
+    return api.post('/api-keys', { name, role, description })
+  },
+
+  revoke: (keyId) => {
+    return api.delete(`/api-keys/${keyId}`)
+  }
+}
+
+// =============================================================================
+// WEBHOOKS API
+// =============================================================================
+
+export const webhooksAPI = {
+  list: () => {
+    return api.get('/webhooks')
+  },
+
+  create: (name, url, events = ['all'], secret = '') => {
+    return api.post('/webhooks', { name, url, events, secret })
+  },
+
+  delete: (webhookId) => {
+    return api.delete(`/webhooks/${webhookId}`)
+  }
+}
+
+// =============================================================================
+// NOTIFICATIONS API
+// =============================================================================
+
+export const notificationsAPI = {
+  list: (unreadOnly = false, limit = 50) => {
+    return api.get('/notifications', { params: { unread_only: unreadOnly, limit } })
+  },
+
+  markRead: (notificationId) => {
+    return api.put(`/notifications/${notificationId}/read`)
+  },
+
+  markAllRead: () => {
+    return api.put('/notifications/read-all')
+  },
+
+  create: (notification) => {
+    return api.post('/notifications', notification)
   }
 }
 

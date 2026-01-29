@@ -4,6 +4,7 @@ import LiveMap from './components/LiveMap'
 import GeofenceManager from './components/GeofenceManager'
 import EventsGrid from './components/EventsGrid'
 import ContainerTracker from './components/ContainerTracker'
+import Admin from './components/Admin'
 import { statsAPI } from './services/api'
 import './App.css'
 
@@ -55,6 +56,13 @@ function Navigation() {
             <span className="nav-icon">🚚</span>
             Track Container
           </Link>
+          <Link
+            to="/admin"
+            className={location.pathname === '/admin' ? 'nav-link active' : 'nav-link'}
+          >
+            <span className="nav-icon">⚙️</span>
+            Admin
+          </Link>
         </div>
         <div className="nav-stats">
           {stats.containers && (
@@ -65,6 +73,11 @@ function Navigation() {
           {stats.gate_events && (
             <span className="nav-stat" title="Gate events">
               🚪 {stats.gate_events}
+            </span>
+          )}
+          {stats.map_last_updated && (
+            <span className="nav-stat" title="Map last updated">
+              🕐 {new Date(stats.map_last_updated).toLocaleDateString()}
             </span>
           )}
         </div>
@@ -84,6 +97,7 @@ function App() {
             <Route path="/geofences" element={<GeofenceManager />} />
             <Route path="/events" element={<EventsGrid />} />
             <Route path="/track" element={<ContainerTracker />} />
+            <Route path="/admin" element={<Admin />} />
           </Routes>
         </main>
       </div>
