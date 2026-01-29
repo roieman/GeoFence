@@ -1,36 +1,72 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom'
+import LiveMap from './components/LiveMap'
+import GeofenceManager from './components/GeofenceManager'
+import EventsGrid from './components/EventsGrid'
 import ContainerTracker from './components/ContainerTracker'
-import AlertsGrid from './components/AlertsGrid'
-import LocationSearch from './components/LocationSearch'
+import { statsAPI } from './services/api'
 import './App.css'
 
 function Navigation() {
   const location = useLocation()
-  
+  const [stats, setStats] = useState({})
+
+  useEffect(() => {
+    statsAPI.get()
+      .then(res => setStats(res.data))
+      .catch(err => console.error('Failed to load stats:', err))
+  }, [location.pathname])
+
   return (
     <nav className="navbar">
       <div className="nav-container">
-        <h1 className="nav-logo">GeoFence</h1>
+        <div className="nav-brand">
+          <h1 className="nav-logo">ZIM GeoFence</h1>
+          <span className="nav-subtitle">Container Tracking System</span>
+        </div>
         <div className="nav-links">
-          <Link 
-            to="/" 
+          <Link
+            to="/"
             className={location.pathname === '/' ? 'nav-link active' : 'nav-link'}
           >
+            <span className="nav-icon">🗺️</span>
+            Live Map
+          </Link>
+          <Link
+            to="/geofences"
+            className={location.pathname === '/geofences' ? 'nav-link active' : 'nav-link'}
+          >
+            <span className="nav-icon">📍</span>
+            Geofences
+            {stats.geofences && <span className="nav-badge">{stats.geofences}</span>}
+          </Link>
+          <Link
+            to="/events"
+            className={location.pathname === '/events' ? 'nav-link active' : 'nav-link'}
+          >
+            <span className="nav-icon">📊</span>
+            Events
+            {stats.iot_events && <span className="nav-badge">{stats.iot_events}</span>}
+          </Link>
+          <Link
+            to="/track"
+            className={location.pathname === '/track' ? 'nav-link active' : 'nav-link'}
+          >
+            <span className="nav-icon">🚚</span>
             Track Container
           </Link>
-          <Link 
-            to="/alerts" 
-            className={location.pathname === '/alerts' ? 'nav-link active' : 'nav-link'}
-          >
-            Alerts
-          </Link>
-          <Link 
-            to="/location" 
-            className={location.pathname === '/location' ? 'nav-link active' : 'nav-link'}
-          >
-            Location Search
-          </Link>
+        </div>
+        <div className="nav-stats">
+          {stats.containers && (
+            <span className="nav-stat" title="Active containers">
+              📦 {stats.containers}
+            </span>
+          )}
+          {stats.gate_events && (
+            <span className="nav-stat" title="Gate events">
+              🚪 {stats.gate_events}
+            </span>
+          )}
         </div>
       </div>
     </nav>
@@ -42,17 +78,17 @@ function App() {
     <Router>
       <div className="app">
         <Navigation />
-        <div className="container">
+        <main className="main-content">
           <Routes>
-            <Route path="/" element={<ContainerTracker />} />
-            <Route path="/alerts" element={<AlertsGrid />} />
-            <Route path="/location" element={<LocationSearch />} />
+            <Route path="/" element={<LiveMap />} />
+            <Route path="/geofences" element={<GeofenceManager />} />
+            <Route path="/events" element={<EventsGrid />} />
+            <Route path="/track" element={<ContainerTracker />} />
           </Routes>
-        </div>
+        </main>
       </div>
     </Router>
   )
 }
 
 export default App
-

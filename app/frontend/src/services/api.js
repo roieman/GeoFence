@@ -7,14 +7,13 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json'
   },
-  timeout: 300000 // 5 minute timeout (300000ms)
+  timeout: 300000 // 5 minute timeout
 })
 
 // Request interceptor for better error handling
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // Handle network errors
     if (error.code === 'ECONNABORTED') {
       error.message = 'Request timeout. The operation took too long.'
     } else if (!error.response) {
@@ -24,47 +23,123 @@ api.interceptors.response.use(
   }
 )
 
-export const containerAPI = {
-  track: (containerId, startDate, endDate) => {
-    const params = {}
-    if (startDate) params.start_date = startDate
-    if (endDate) params.end_date = endDate
-    return api.get(`/containers/${containerId}/track`, { params })
-  }
-}
+// =============================================================================
+// GEOFENCES API
+// =============================================================================
 
-export const alertsAPI = {
-  getAll: (filters = {}) => {
-    return api.get('/alerts', { params: filters })
+export const geofencesAPI = {
+  list: (params = {}) => {
+    return api.get('/geofences', { params })
   },
-  acknowledge: (alertId) => {
-    return api.post(`/alerts/${alertId}/acknowledge`)
+
+  get: (id) => {
+    return api.get(`/geofences/${id}`)
+  },
+
+  getByName: (name) => {
+    return api.get(`/geofences/by-name/${encodeURIComponent(name)}`)
+  },
+
+  create: (geofence) => {
+    return api.post('/geofences', geofence)
+  },
+
+  update: (id, updates) => {
+    return api.put(`/geofences/${id}`, updates)
+  },
+
+  delete: (id) => {
+    return api.delete(`/geofences/${id}`)
+  },
+
+  exportCSV: (typeId) => {
+    const params = typeId ? { type_id: typeId } : {}
+    return api.get('/geofences/export/csv', {
+      params,
+      responseType: 'blob'
+    })
+  },
+
+  exportGeoJSON: (typeId) => {
+    const params = typeId ? { type_id: typeId } : {}
+    return api.get('/geofences/export/geojson', {
+      params,
+      responseType: 'blob'
+    })
+  },
+
+  importCSV: (file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post('/geofences/import/csv', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
+
+  atPoint: (lon, lat) => {
+    return api.get('/geofences/at-point', { params: { lon, lat } })
   }
 }
 
-export const locationsAPI = {
-  getAll: (search, locationType, limit = 10) => {
+// =============================================================================
+// IOT EVENTS API
+// =============================================================================
+
+export const iotEventsAPI = {
+  list: (params = {}) => {
+    return api.get('/iot-events', { params })
+  },
+
+  latest: (limit = 50) => {
+    return api.get('/iot-events/latest', { params: { limit } })
+  },
+
+  byContainer: (containerId, startDate, endDate, limit = 1000) => {
     const params = { limit }
-    if (search) params.search = search
-    if (locationType) params.location_type = locationType
-    return api.get('/locations', { params })
-  },
-  getStatic: () => {
-    return api.get('/locations/static')
-  },
-  getContainers: (locationName, startDate, endDate, radiusMeters, page, limit) => {
-    const params = { radius_meters: radiusMeters, page, limit }
     if (startDate) params.start_date = startDate
     if (endDate) params.end_date = endDate
-    return api.get(`/locations/${encodeURIComponent(locationName)}/containers`, { params })
+    return api.get(`/iot-events/by-container/${encodeURIComponent(containerId)}`, { params })
   },
-  getContainersTimeSeries: (locationName, startDate, endDate, radiusMeters, page, limit) => {
-    const params = { radius_meters: radiusMeters, page, limit }
+
+  inGeofence: (geofenceName, startDate, endDate, limit = 100) => {
+    const params = { limit }
     if (startDate) params.start_date = startDate
     if (endDate) params.end_date = endDate
-    return api.get(`/locations/${encodeURIComponent(locationName)}/containers/timeseries`, { params })
+    return api.get(`/iot-events/in-geofence/${encodeURIComponent(geofenceName)}`, { params })
   }
 }
+
+// =============================================================================
+// GATE EVENTS API (Geofence Crossings)
+// =============================================================================
+
+export const gateEventsAPI = {
+  list: (params = {}) => {
+    return api.get('/gate-events', { params })
+  }
+}
+
+// =============================================================================
+// CONTAINERS API
+// =============================================================================
+
+export const containersAPI = {
+  list: (params = {}) => {
+    return api.get('/containers', { params })
+  },
+
+  get: (containerId) => {
+    return api.get(`/containers/${encodeURIComponent(containerId)}`)
+  },
+
+  positions: () => {
+    return api.get('/containers/positions/latest')
+  }
+}
+
+// =============================================================================
+// STATS & REFERENCE API
+// =============================================================================
 
 export const statsAPI = {
   get: () => {
@@ -72,17 +147,49 @@ export const statsAPI = {
   }
 }
 
-export const alertGenerationAPI = {
-  getStatus: () => {
-    return api.get('/alert-generation/status')
+export const referenceAPI = {
+  geofenceTypes: () => {
+    return api.get('/reference/geofence-types')
   },
-  start: () => {
-    return api.post('/alert-generation/start')
+
+  eventTypes: () => {
+    return api.get('/reference/event-types')
+  }
+}
+
+// =============================================================================
+// LEGACY API (for backward compatibility)
+// =============================================================================
+
+export const containerAPI = {
+  track: (containerId, startDate, endDate) => {
+    return iotEventsAPI.byContainer(containerId, startDate, endDate)
+  }
+}
+
+export const alertsAPI = {
+  getAll: (filters = {}) => {
+    return gateEventsAPI.list(filters)
   },
-  stop: () => {
-    return api.post('/alert-generation/stop')
+  acknowledge: (alertId) => {
+    // Gate events don't have acknowledge, but keep for compatibility
+    return Promise.resolve({ data: { success: true } })
+  }
+}
+
+export const locationsAPI = {
+  getAll: (search, locationType, limit = 10) => {
+    const params = { limit }
+    if (search) params.search = search
+    if (locationType) params.type_id = locationType
+    return geofencesAPI.list(params)
+  },
+  getStatic: () => {
+    return geofencesAPI.list({ limit: 10 })
+  },
+  getContainers: (locationName, startDate, endDate, radiusMeters, page, limit) => {
+    return iotEventsAPI.inGeofence(locationName, startDate, endDate, limit)
   }
 }
 
 export default api
-
