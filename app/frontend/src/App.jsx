@@ -22,8 +22,11 @@ function Navigation() {
     <nav className="navbar">
       <div className="nav-container">
         <div className="nav-brand">
-          <h1 className="nav-logo">ZIM GeoFence</h1>
-          <span className="nav-subtitle">Container Tracking System</span>
+          <img src="/zim-logo.png" alt="ZIM" className="nav-logo-img" />
+          <div className="nav-logo-text">
+            <h1 className="nav-logo">GeoFence</h1>
+            <span className="nav-subtitle">Container Tracking System</span>
+          </div>
         </div>
         <div className="nav-links">
           <Link

@@ -1,3 +1,7 @@
+/* =============================================================================
+   ZIM GEOFENCE - BASE STYLES
+   ============================================================================= */
+
 * {
   margin: 0;
   padding: 0;
@@ -5,68 +9,87 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: 'Segoe UI', Roboto, -apple-system, BlinkMacSystemFont, Oxygen,
+    Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #f5f5f5;
+  background-color: #F5F6FA;
+  color: #333333;
 }
 
 code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+  font-family: 'Consolas', 'Monaco', source-code-pro, Menlo, 'Courier New', monospace;
 }
 
+/* Container */
 .container {
-  max-width: 1400px;
+  max-width: 1600px;
   margin: 0 auto;
-  padding: 20px;
+  padding: 24px;
 }
 
+/* Card component */
 .card {
   background: white;
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
   padding: 20px;
   margin-bottom: 20px;
+  border: 1px solid #E0E0E0;
 }
 
+/* Button base */
 .btn {
   padding: 10px 20px;
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 14px;
-  transition: background-color 0.2s;
+  font-size: 0.9rem;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .btn-primary {
-  background-color: #007bff;
-  color: white;
+  background-color: #FFD100;
+  color: #1C2340;
+  border: 2px solid #FFD100;
 }
 
 .btn-primary:hover {
-  background-color: #0056b3;
+  background-color: #D4AD00;
+  border-color: #D4AD00;
 }
 
 .btn-secondary {
-  background-color: #6c757d;
-  color: white;
+  background-color: #1C2340;
+  color: #FFFFFF;
+  border: 2px solid #1C2340;
 }
 
 .btn-secondary:hover {
-  background-color: #545b62;
+  background-color: #0D1321;
+  border-color: #0D1321;
 }
 
+/* Input */
 .input {
-  padding: 10px;
-  border: 1px solid #ddd;
+  padding: 10px 12px;
+  border: 2px solid #E0E0E0;
   border-radius: 4px;
-  font-size: 14px;
+  font-size: 0.9rem;
   width: 100%;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
+.input:focus {
+  outline: none;
+  border-color: #FFD100;
+  box-shadow: 0 0 0 3px rgba(255, 209, 0, 0.2);
+}
+
+/* Table */
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -75,50 +98,68 @@ code {
 
 .table th,
 .table td {
-  padding: 12px;
+  padding: 14px 16px;
   text-align: left;
-  border-bottom: 1px solid #ddd;
+  border-bottom: 1px solid #E0E0E0;
 }
 
 .table th {
-  background-color: #f8f9fa;
+  background-color: #1C2340;
+  color: #FFFFFF;
   font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .table tr:hover {
-  background-color: #f8f9fa;
+  background-color: #FFF0B3;
 }
 
+/* Badges */
 .badge {
   display: inline-block;
-  padding: 4px 8px;
+  padding: 4px 10px;
   border-radius: 4px;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .badge-success {
-  background-color: #28a745;
-  color: white;
+  background-color: #E8F5E9;
+  color: #2E7D32;
 }
 
 .badge-warning {
-  background-color: #ffc107;
-  color: #000;
+  background-color: #FFD100;
+  color: #1C2340;
 }
 
 .badge-info {
-  background-color: #17a2b8;
-  color: white;
+  background-color: #1C2340;
+  color: #FFD100;
 }
 
 .badge-danger {
-  background-color: #dc3545;
-  color: white;
+  background-color: #FFEBEE;
+  color: #C62828;
 }
 
-/* Click outside to close suggestions */
+/* Autocomplete container */
 .autocomplete-container {
   position: relative;
 }
 
+/* Selection highlight */
+::selection {
+  background-color: #FFD100;
+  color: #1C2340;
+}
+
+/* Focus visible for accessibility */
+:focus-visible {
+  outline: 2px solid #FFD100;
+  outline-offset: 2px;
+}

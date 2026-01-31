@@ -51,10 +51,13 @@ class Container:
 
     # Journey information
     origin_depot: Optional[dict] = None
+    origin_rail_ramp: Optional[dict] = None
     origin_terminal: Optional[dict] = None
     destination_terminal: Optional[dict] = None
+    destination_rail_ramp: Optional[dict] = None
     destination_depot: Optional[dict] = None
     vessel_id: Optional[str] = None
+    use_rail: bool = False  # Whether this journey uses rail routing
 
     # Route waypoints
     current_route: List[Tuple[float, float]] = field(default_factory=list)
@@ -111,14 +114,34 @@ class Container:
     def transition_to(self, new_state: str):
         """Transition to a new state."""
         valid_transitions = {
-            ContainerState.AT_ORIGIN_DEPOT: [ContainerState.IN_TRANSIT_TO_TERMINAL],
+            # Standard journey (no rail)
+            ContainerState.AT_ORIGIN_DEPOT: [
+                ContainerState.IN_TRANSIT_TO_TERMINAL,
+                ContainerState.IN_TRANSIT_TO_RAIL_RAMP  # Rail option
+            ],
             ContainerState.IN_TRANSIT_TO_TERMINAL: [ContainerState.AT_ORIGIN_TERMINAL],
             ContainerState.AT_ORIGIN_TERMINAL: [ContainerState.LOADED_ON_VESSEL],
             ContainerState.LOADED_ON_VESSEL: [ContainerState.IN_TRANSIT_OCEAN],
             ContainerState.IN_TRANSIT_OCEAN: [ContainerState.AT_DESTINATION_TERMINAL],
-            ContainerState.AT_DESTINATION_TERMINAL: [ContainerState.IN_TRANSIT_TO_DEPOT],
+            ContainerState.AT_DESTINATION_TERMINAL: [
+                ContainerState.IN_TRANSIT_TO_DEPOT,
+                ContainerState.IN_TRANSIT_FROM_TERMINAL  # Rail option
+            ],
             ContainerState.IN_TRANSIT_TO_DEPOT: [ContainerState.AT_DESTINATION_DEPOT],
-            ContainerState.AT_DESTINATION_DEPOT: [ContainerState.IN_TRANSIT_TO_TERMINAL],  # New journey
+            ContainerState.AT_DESTINATION_DEPOT: [
+                ContainerState.IN_TRANSIT_TO_TERMINAL,
+                ContainerState.IN_TRANSIT_TO_RAIL_RAMP  # New journey can use rail
+            ],
+
+            # Origin rail routing (depot -> rail ramp -> terminal)
+            ContainerState.IN_TRANSIT_TO_RAIL_RAMP: [ContainerState.AT_ORIGIN_RAIL_RAMP],
+            ContainerState.AT_ORIGIN_RAIL_RAMP: [ContainerState.IN_TRANSIT_RAIL],
+            ContainerState.IN_TRANSIT_RAIL: [ContainerState.IN_TRANSIT_TO_TERMINAL],
+
+            # Destination rail routing (terminal -> rail ramp -> depot)
+            ContainerState.IN_TRANSIT_FROM_TERMINAL: [ContainerState.AT_DESTINATION_RAIL_RAMP],
+            ContainerState.AT_DESTINATION_RAIL_RAMP: [ContainerState.IN_TRANSIT_RAIL_TO_DEPOT],
+            ContainerState.IN_TRANSIT_RAIL_TO_DEPOT: [ContainerState.IN_TRANSIT_TO_DEPOT],
         }
 
         if new_state in valid_transitions.get(self.state, []):
@@ -128,6 +151,13 @@ class Container:
 
     def to_dict(self) -> dict:
         """Convert to dictionary for MongoDB."""
+        def get_name(obj):
+            if obj is None:
+                return None
+            if isinstance(obj, dict):
+                return obj.get("properties", {}).get("name") or obj.get("name")
+            return None
+
         return {
             "container_id": self.metadata.container_id,
             "tracker_id": self.metadata.tracker_id,
@@ -142,8 +172,11 @@ class Container:
             "door_open": self.door_open,
             "current_geofence": self.current_geofence,
             "vessel_id": self.vessel_id,
-            "origin_depot": self.origin_depot.get("name") if self.origin_depot else None,
-            "origin_terminal": self.origin_terminal.get("name") if self.origin_terminal else None,
-            "destination_terminal": self.destination_terminal.get("name") if self.destination_terminal else None,
-            "destination_depot": self.destination_depot.get("name") if self.destination_depot else None,
+            "use_rail": self.use_rail,
+            "origin_depot": get_name(self.origin_depot),
+            "origin_rail_ramp": get_name(self.origin_rail_ramp),
+            "origin_terminal": get_name(self.origin_terminal),
+            "destination_terminal": get_name(self.destination_terminal),
+            "destination_rail_ramp": get_name(self.destination_rail_ramp),
+            "destination_depot": get_name(self.destination_depot),
         }

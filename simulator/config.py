@@ -39,14 +39,29 @@ TRUCK_SPEED_MIN = 40
 TRUCK_SPEED_MAX = 80
 TRUCK_SPEED_AVG = 60
 
+# Rail transport speeds (in km/h)
+RAIL_SPEED_MIN = 50
+RAIL_SPEED_MAX = 100
+RAIL_SPEED_AVG = 70
+
+# Rail routing configuration
+RAIL_ROUTING_PROBABILITY = 0.3  # 30% of eligible journeys use rail
+RAIL_ENABLED_COUNTRIES = ["US", "CA", "GB"]  # Countries with rail ramps
+
 # Container states
 class ContainerState:
     AT_ORIGIN_DEPOT = "at_origin_depot"
+    IN_TRANSIT_TO_RAIL_RAMP = "in_transit_to_rail_ramp"
+    AT_ORIGIN_RAIL_RAMP = "at_origin_rail_ramp"
+    IN_TRANSIT_RAIL = "in_transit_rail"
     IN_TRANSIT_TO_TERMINAL = "in_transit_to_terminal"
     AT_ORIGIN_TERMINAL = "at_origin_terminal"
     LOADED_ON_VESSEL = "loaded_on_vessel"
     IN_TRANSIT_OCEAN = "in_transit_ocean"
     AT_DESTINATION_TERMINAL = "at_destination_terminal"
+    IN_TRANSIT_FROM_TERMINAL = "in_transit_from_terminal"
+    AT_DESTINATION_RAIL_RAMP = "at_destination_rail_ramp"
+    IN_TRANSIT_RAIL_TO_DEPOT = "in_transit_rail_to_depot"
     IN_TRANSIT_TO_DEPOT = "in_transit_to_depot"
     AT_DESTINATION_DEPOT = "at_destination_depot"
 
@@ -59,6 +74,9 @@ class EventType:
     DOOR_CLOSED = "Door Closed"
     GATE_IN = "Gate In"
     GATE_OUT = "Gate Out"
+    IN_TRANSIT_RAIL = "In Transit by Rail"
+    RAIL_LOADED = "Loaded on Rail"
+    RAIL_UNLOADED = "Unloaded from Rail"
 
 # Geofence types
 class GeofenceType:

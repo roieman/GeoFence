@@ -1,14 +1,26 @@
 """
 Route generator - creates realistic shipping routes between geofences.
-Handles both ocean routes (vessel) and land routes (truck).
+Handles both ocean routes (vessel) and land routes (truck/rail).
+
+Includes:
+- Ocean chokepoint routing (Suez, Panama, Malacca, etc.)
+- Rail ramp routing for US/Canada/UK
+- Route validation to avoid land masses
 """
 import math
 import random
 from typing import List, Tuple, Optional
 from pymongo.database import Database
 
-from simulator.config import COLLECTIONS, GeofenceType
+from simulator.config import (
+    COLLECTIONS, GeofenceType,
+    RAIL_ROUTING_PROBABILITY, RAIL_ENABLED_COUNTRIES
+)
 from simulator.core.geofence_checker import GeofenceChecker
+from simulator.data.chokepoints import (
+    CHOKEPOINTS, get_terminal_region, get_route_chokepoints
+)
+from simulator.data.water_regions import is_point_in_water, is_point_clearly_on_land, get_nearest_water_point
 
 
 class RouteGenerator:
@@ -76,13 +88,14 @@ class RouteGenerator:
         """
         Generate a realistic ocean route between two terminals.
 
-        Creates a great circle route with some randomization to simulate
-        actual shipping lanes. Points are placed in water (not on land).
+        Creates routes through appropriate shipping chokepoints (Suez, Panama, etc.)
+        based on origin and destination regions. Uses great circle segments between
+        waypoints with randomization for realism.
 
         Args:
             origin: Origin terminal geofence
             destination: Destination terminal geofence
-            num_waypoints: Number of intermediate waypoints
+            num_waypoints: Number of intermediate waypoints per segment
 
         Returns:
             List of (lon, lat) waypoints
@@ -90,18 +103,121 @@ class RouteGenerator:
         origin_centroid = self.checker.get_centroid(origin)
         dest_centroid = self.checker.get_centroid(destination)
 
-        # Generate great circle route
-        waypoints = self._great_circle_points(
-            origin_centroid[0], origin_centroid[1],
-            dest_centroid[0], dest_centroid[1],
-            num_waypoints
+        # Determine which chokepoints are needed based on regions
+        origin_region = get_terminal_region(origin, origin_centroid)
+        dest_region = get_terminal_region(destination, dest_centroid)
+
+        chokepoint_keys = get_route_chokepoints(origin_region, dest_region)
+
+        # Build route through chokepoints
+        waypoints = self._build_chokepoint_route(
+            origin_centroid, dest_centroid,
+            chokepoint_keys, num_waypoints
         )
 
+        # Validate route stays in water
+        waypoints = self._validate_ocean_route(waypoints)
+
         # Add some randomization to make route more realistic
-        # (simulating actual shipping lanes, weather routing, etc.)
         waypoints = self._add_route_variation(waypoints, max_deviation_km=50)
 
         return waypoints
+
+    def _build_chokepoint_route(
+        self,
+        origin: Tuple[float, float],
+        destination: Tuple[float, float],
+        chokepoint_keys: List[str],
+        waypoints_per_segment: int = 10
+    ) -> List[Tuple[float, float]]:
+        """
+        Build a route passing through specified chokepoints.
+
+        Args:
+            origin: (lon, lat) of origin
+            destination: (lon, lat) of destination
+            chokepoint_keys: List of chokepoint keys to pass through
+            waypoints_per_segment: Number of waypoints per route segment
+
+        Returns:
+            List of (lon, lat) waypoints
+        """
+        if not chokepoint_keys:
+            # Direct route if no chokepoints needed
+            return self._great_circle_points(
+                origin[0], origin[1],
+                destination[0], destination[1],
+                waypoints_per_segment * 2
+            )
+
+        # Build list of all waypoints including chokepoint waypoints
+        all_waypoints = []
+        current_point = origin
+
+        for key in chokepoint_keys:
+            chokepoint = CHOKEPOINTS.get(key)
+            if not chokepoint:
+                continue
+
+            cp_waypoints = chokepoint["waypoints"]
+            if not cp_waypoints:
+                continue
+
+            # Route from current point to first chokepoint waypoint
+            segment = self._great_circle_points(
+                current_point[0], current_point[1],
+                cp_waypoints[0][0], cp_waypoints[0][1],
+                waypoints_per_segment
+            )
+            all_waypoints.extend(segment[:-1])  # Exclude last to avoid duplicates
+
+            # Add chokepoint waypoints
+            all_waypoints.extend(cp_waypoints)
+
+            # Update current point to last chokepoint waypoint
+            current_point = cp_waypoints[-1]
+
+        # Route from last chokepoint to destination
+        final_segment = self._great_circle_points(
+            current_point[0], current_point[1],
+            destination[0], destination[1],
+            waypoints_per_segment
+        )
+        all_waypoints.extend(final_segment)
+
+        return all_waypoints
+
+    def _validate_ocean_route(
+        self,
+        waypoints: List[Tuple[float, float]]
+    ) -> List[Tuple[float, float]]:
+        """
+        Validate ocean route waypoints stay in water.
+        Adjust any points that appear to be on land.
+
+        Args:
+            waypoints: List of (lon, lat) waypoints
+
+        Returns:
+            Adjusted waypoints list
+        """
+        if len(waypoints) <= 2:
+            return waypoints
+
+        validated = [waypoints[0]]  # Keep origin
+
+        for i in range(1, len(waypoints) - 1):
+            lon, lat = waypoints[i]
+
+            if is_point_clearly_on_land(lon, lat):
+                # Adjust point toward water
+                adjusted = get_nearest_water_point(lon, lat)
+                validated.append(adjusted)
+            else:
+                validated.append((lon, lat))
+
+        validated.append(waypoints[-1])  # Keep destination
+        return validated
 
     def generate_land_route(
         self,
@@ -247,9 +363,11 @@ class RouteGenerator:
     def select_journey(self) -> dict:
         """
         Select a complete journey: depot -> terminal -> terminal -> depot.
+        May include rail ramps for eligible countries.
 
         Returns:
-            Dictionary with origin_depot, origin_terminal, destination_terminal, destination_depot
+            Dictionary with origin_depot, origin_terminal, destination_terminal, destination_depot,
+            plus optional origin_rail_ramp, destination_rail_ramp, and use_rail flag.
         """
         self._load_geofences()
 
@@ -266,9 +384,125 @@ class RouteGenerator:
         origin_depot = self.get_random_depot(near_terminal=origin_terminal)
         destination_depot = self.get_random_depot(near_terminal=destination_terminal)
 
-        return {
+        journey = {
             "origin_depot": origin_depot,
             "origin_terminal": origin_terminal,
             "destination_terminal": destination_terminal,
-            "destination_depot": destination_depot
+            "destination_depot": destination_depot,
+            "origin_rail_ramp": None,
+            "destination_rail_ramp": None,
+            "use_rail": False
         }
+
+        # Check if rail routing should be used
+        if self.should_use_rail(origin_depot, origin_terminal):
+            rail_ramp = self.get_random_rail_ramp(near_terminal=origin_terminal)
+            if rail_ramp:
+                journey["origin_rail_ramp"] = rail_ramp
+                journey["use_rail"] = True
+
+        if self.should_use_rail(destination_depot, destination_terminal):
+            rail_ramp = self.get_random_rail_ramp(near_terminal=destination_terminal)
+            if rail_ramp:
+                journey["destination_rail_ramp"] = rail_ramp
+                journey["use_rail"] = True
+
+        return journey
+
+    def get_random_rail_ramp(self, near_terminal: Optional[dict] = None) -> Optional[dict]:
+        """
+        Get a random rail ramp, preferring ones near a terminal.
+
+        Args:
+            near_terminal: Optional terminal to find rail ramps near
+
+        Returns:
+            Rail ramp geofence dict or None
+        """
+        self._load_geofences()
+
+        if not self._rail_ramps:
+            return None
+
+        if near_terminal:
+            # Find rail ramps in the same country
+            terminal_name = near_terminal["properties"]["name"]
+            country_code = terminal_name[:2] if len(terminal_name) >= 2 else ""
+
+            same_country = [r for r in self._rail_ramps
+                           if r["properties"]["name"].startswith(country_code)]
+
+            if same_country:
+                return random.choice(same_country)
+
+        return random.choice(self._rail_ramps)
+
+    def should_use_rail(self, depot: Optional[dict], terminal: Optional[dict]) -> bool:
+        """
+        Determine if rail routing should be used for a journey segment.
+
+        Uses RAIL_ROUTING_PROBABILITY and checks if the country supports rail.
+
+        Args:
+            depot: Depot geofence
+            terminal: Terminal geofence
+
+        Returns:
+            True if rail should be used, False otherwise
+        """
+        if not depot or not terminal:
+            return False
+
+        # Check if terminal is in a rail-enabled country
+        terminal_name = terminal["properties"]["name"]
+        country_code = terminal_name[:2] if len(terminal_name) >= 2 else ""
+
+        if country_code not in RAIL_ENABLED_COUNTRIES:
+            return False
+
+        # Check if we have rail ramps in this country
+        self._load_geofences()
+        country_ramps = [r for r in self._rail_ramps
+                         if r["properties"]["name"].startswith(country_code)]
+
+        if not country_ramps:
+            return False
+
+        # Apply probability
+        return random.random() < RAIL_ROUTING_PROBABILITY
+
+    def generate_rail_route(
+        self,
+        origin: dict,
+        destination: dict,
+        num_waypoints: int = 15
+    ) -> List[Tuple[float, float]]:
+        """
+        Generate a rail route between two geofences.
+
+        Similar to land route but with longer segments and less variation
+        since trains follow fixed tracks.
+
+        Args:
+            origin: Origin geofence (rail ramp or terminal)
+            destination: Destination geofence (rail ramp or terminal)
+            num_waypoints: Number of intermediate waypoints
+
+        Returns:
+            List of (lon, lat) waypoints
+        """
+        origin_centroid = self.checker.get_centroid(origin)
+        dest_centroid = self.checker.get_centroid(destination)
+
+        # Rail routes are more direct than truck routes
+        waypoints = []
+        for i in range(num_waypoints + 1):
+            t = i / num_waypoints
+            lon = origin_centroid[0] + t * (dest_centroid[0] - origin_centroid[0])
+            lat = origin_centroid[1] + t * (dest_centroid[1] - origin_centroid[1])
+            waypoints.append((lon, lat))
+
+        # Add minimal variation for rail routes
+        waypoints = self._add_route_variation(waypoints, max_deviation_km=2)
+
+        return waypoints

@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from simulator.config import (
     SIMULATION_SPEED, EVENT_INTERVAL_SECONDS,
-    ContainerState, VESSEL_SPEED_AVG, TRUCK_SPEED_AVG
+    ContainerState, VESSEL_SPEED_AVG, TRUCK_SPEED_AVG, RAIL_SPEED_AVG
 )
 from simulator.models.container import Container, ContainerMetadata
 from simulator.models.vessel import Vessel
@@ -94,6 +94,7 @@ class ContainerSimulator:
 
     def _create_containers(self):
         """Create initial containers with assigned journeys."""
+        rail_count = 0
         for i in range(self.num_containers):
             container = Container()
 
@@ -101,9 +102,15 @@ class ContainerSimulator:
             try:
                 journey = self.route_generator.select_journey()
                 container.origin_depot = journey["origin_depot"]
+                container.origin_rail_ramp = journey.get("origin_rail_ramp")
                 container.origin_terminal = journey["origin_terminal"]
                 container.destination_terminal = journey["destination_terminal"]
+                container.destination_rail_ramp = journey.get("destination_rail_ramp")
                 container.destination_depot = journey["destination_depot"]
+                container.use_rail = journey.get("use_rail", False)
+
+                if container.use_rail:
+                    rail_count += 1
 
                 # Start at origin depot
                 if container.origin_depot:
@@ -111,11 +118,16 @@ class ContainerSimulator:
                     container.set_position(centroid[1], centroid[0])  # lat, lon
                     container.current_geofence = container.origin_depot["properties"]["name"]
 
-                # Generate route to origin terminal
-                if container.origin_depot and container.origin_terminal:
-                    container.current_route = self.route_generator.generate_land_route(
-                        container.origin_depot, container.origin_terminal
-                    )
+                # Generate initial route (to rail ramp if using rail, else to terminal)
+                if container.origin_depot:
+                    if container.use_rail and container.origin_rail_ramp:
+                        container.current_route = self.route_generator.generate_land_route(
+                            container.origin_depot, container.origin_rail_ramp
+                        )
+                    elif container.origin_terminal:
+                        container.current_route = self.route_generator.generate_land_route(
+                            container.origin_depot, container.origin_terminal
+                        )
 
                 # Stagger journey start times
                 container.journey_start_time = self.sim_time + timedelta(hours=random.randint(0, 48))
@@ -131,6 +143,9 @@ class ContainerSimulator:
 
             except Exception as e:
                 print(f"  Error creating container {i + 1}: {e}")
+
+        if rail_count > 0:
+            print(f"  {rail_count}/{self.num_containers} containers will use rail routing")
 
     def _advance_simulation_time(self, real_elapsed_seconds: float):
         """Advance simulation time based on real elapsed time and speed."""
@@ -225,12 +240,38 @@ class ContainerSimulator:
 
         try:
             if current_state == ContainerState.AT_ORIGIN_DEPOT:
-                container.transition_to(ContainerState.IN_TRANSIT_TO_TERMINAL)
-                if container.origin_depot and container.origin_terminal:
+                # Check if using rail for origin
+                if container.use_rail and container.origin_rail_ramp:
+                    container.transition_to(ContainerState.IN_TRANSIT_TO_RAIL_RAMP)
                     container.current_route = self.route_generator.generate_land_route(
-                        container.origin_depot, container.origin_terminal
+                        container.origin_depot, container.origin_rail_ramp
+                    )
+                else:
+                    container.transition_to(ContainerState.IN_TRANSIT_TO_TERMINAL)
+                    if container.origin_depot and container.origin_terminal:
+                        container.current_route = self.route_generator.generate_land_route(
+                            container.origin_depot, container.origin_terminal
+                        )
+                container.route_index = 0
+
+            elif current_state == ContainerState.IN_TRANSIT_TO_RAIL_RAMP:
+                container.transition_to(ContainerState.AT_ORIGIN_RAIL_RAMP)
+                container.current_route = []
+                container.route_index = 0
+
+            elif current_state == ContainerState.AT_ORIGIN_RAIL_RAMP:
+                container.transition_to(ContainerState.IN_TRANSIT_RAIL)
+                if container.origin_rail_ramp and container.origin_terminal:
+                    container.current_route = self.route_generator.generate_rail_route(
+                        container.origin_rail_ramp, container.origin_terminal
                     )
                     container.route_index = 0
+
+            elif current_state == ContainerState.IN_TRANSIT_RAIL:
+                container.transition_to(ContainerState.IN_TRANSIT_TO_TERMINAL)
+                # Short final segment from rail to terminal
+                container.current_route = []
+                container.route_index = 0
 
             elif current_state == ContainerState.IN_TRANSIT_TO_TERMINAL:
                 container.transition_to(ContainerState.AT_ORIGIN_TERMINAL)
@@ -254,12 +295,37 @@ class ContainerSimulator:
                 container.route_index = 0
 
             elif current_state == ContainerState.AT_DESTINATION_TERMINAL:
-                container.transition_to(ContainerState.IN_TRANSIT_TO_DEPOT)
-                if container.destination_terminal and container.destination_depot:
+                # Check if using rail for destination
+                if container.use_rail and container.destination_rail_ramp:
+                    container.transition_to(ContainerState.IN_TRANSIT_FROM_TERMINAL)
                     container.current_route = self.route_generator.generate_land_route(
-                        container.destination_terminal, container.destination_depot
+                        container.destination_terminal, container.destination_rail_ramp
+                    )
+                else:
+                    container.transition_to(ContainerState.IN_TRANSIT_TO_DEPOT)
+                    if container.destination_terminal and container.destination_depot:
+                        container.current_route = self.route_generator.generate_land_route(
+                            container.destination_terminal, container.destination_depot
+                        )
+                container.route_index = 0
+
+            elif current_state == ContainerState.IN_TRANSIT_FROM_TERMINAL:
+                container.transition_to(ContainerState.AT_DESTINATION_RAIL_RAMP)
+                container.current_route = []
+                container.route_index = 0
+
+            elif current_state == ContainerState.AT_DESTINATION_RAIL_RAMP:
+                container.transition_to(ContainerState.IN_TRANSIT_RAIL_TO_DEPOT)
+                if container.destination_rail_ramp and container.destination_depot:
+                    container.current_route = self.route_generator.generate_rail_route(
+                        container.destination_rail_ramp, container.destination_depot
                     )
                     container.route_index = 0
+
+            elif current_state == ContainerState.IN_TRANSIT_RAIL_TO_DEPOT:
+                container.transition_to(ContainerState.IN_TRANSIT_TO_DEPOT)
+                container.current_route = []
+                container.route_index = 0
 
             elif current_state == ContainerState.IN_TRANSIT_TO_DEPOT:
                 container.transition_to(ContainerState.AT_DESTINATION_DEPOT)
@@ -282,11 +348,15 @@ class ContainerSimulator:
         try:
             journey = self.route_generator.select_journey()
             container.origin_depot = journey["origin_depot"]
+            container.origin_rail_ramp = journey.get("origin_rail_ramp")
             container.origin_terminal = journey["origin_terminal"]
             container.destination_terminal = journey["destination_terminal"]
+            container.destination_rail_ramp = journey.get("destination_rail_ramp")
             container.destination_depot = journey["destination_depot"]
+            container.use_rail = journey.get("use_rail", False)
             container.state = ContainerState.AT_ORIGIN_DEPOT
             container.route_index = 0
+            container.current_route = []
 
             if container.origin_depot:
                 centroid = self.geofence_checker.get_centroid(container.origin_depot)
@@ -339,13 +409,16 @@ class ContainerSimulator:
     def _print_status(self):
         """Print current simulation status."""
         states = {}
+        rail_count = 0
         for c in self.containers:
             states[c.state] = states.get(c.state, 0) + 1
+            if c.use_rail:
+                rail_count += 1
 
         print(f"\n[{self.sim_time.strftime('%Y-%m-%d %H:%M')}] Events: {self.events_generated}")
-        print(f"  Container states:")
+        print(f"  Container states (rail: {rail_count}):")
         for state, count in sorted(states.items()):
-            short_state = state.replace("at_", "").replace("in_transit_", "→")
+            short_state = state.replace("at_", "").replace("in_transit_", "→").replace("_rail_ramp", "_rail").replace("_to_", "_")
             print(f"    {short_state}: {count}")
 
     def stop(self):
