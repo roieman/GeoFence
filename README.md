@@ -1,369 +1,178 @@
-# MongoDB GeoSpatial Demo - GeoFence
+# ZIM GeoFence - Container Tracking System
 
-A comprehensive demo application showcasing MongoDB's geospatial capabilities with a full-stack web interface for tracking shipping containers, monitoring locations, and generating real-time alerts.
+A geofencing and container tracking demo for ZIM Shipping, showcasing MongoDB's geospatial capabilities with real Zim terminal data.
 
-## Overview
-
-This project demonstrates MongoDB's geospatial capabilities with:
-- **300,000+ locations** (ports, train terminals, industrial facilities) with Point and Polygon geometries
-- **TimeSeries collection** for container tracking with periodic location readings
-- **Real-time alert system** using MongoDB Change Streams
-- **Full-stack web application** with React frontend and FastAPI backend
-- **Atlas Search integration** for location autocomplete
+![ZIM Logo](app/frontend/public/zim-logo.png)
 
 ## Features
 
-### Data Generation
-- Generate large-scale location data (ports, terminals, factories, warehouses)
-- Generate TimeSeries container data with realistic shipping routes
-- Support for both regular and TimeSeries collections
+- **1,153 Real Zim Geofences** - Terminals, depots, and rail ramps worldwide
+- **Realistic Container Simulation** - IoT events matching Zim's actual data format
+- **Ocean Chokepoint Routing** - Routes through Suez, Panama, Malacca, etc.
+- **Rail Routing Support** - 30% of US/CA/UK journeys use rail ramps
+- **Real-time Tracking** - Live map with container positions
+- **Gate Events** - Automatic geofence entry/exit detection
+- **TimeSeries Collections** - Optimized for time-range queries
 
-### Web Application
-- **Container Tracker**: Track individual container movement on an interactive map
-- **Alerts Grid**: View and filter system alerts with real-time updates
-- **Location Search**: 
-  - Search containers by location with autocomplete
-  - Compare performance between Regular and TimeSeries collections
-  - View query execution times
-  - Display results on interactive maps
+## Quick Start
 
-### Geospatial Capabilities
-- Point-based location queries with radius
-- Polygon-based location queries
-- Geospatial aggregation pipelines
-- Real-time geofence monitoring
+### Option 1: Automated Setup (Recommended)
 
-## Architecture
+```bash
+# Clone the repository
+git clone https://github.com/roieman/GeoFence.git
+cd GeoFence
+
+# Run setup script
+./setup.sh
+
+# Start backend (Terminal 1)
+source venv/bin/activate
+cd app/backend && python main_zim.py
+
+# Start frontend (Terminal 2)
+cd app/frontend && npm run dev
+```
+
+Then open **http://localhost:3000** in your browser.
+
+### Option 2: Docker Setup
+
+```bash
+# Clone and start with Docker
+git clone https://github.com/roieman/GeoFence.git
+cd GeoFence
+docker-compose up -d
+
+# Import geofence data
+docker-compose exec backend python simulator/import_geofences.py
+```
+
+Open **http://localhost:3000** in your browser.
+
+### Option 3: Manual Setup
+
+See [DEMO_SETUP_INSTRUCTIONS.md](DEMO_SETUP_INSTRUCTIONS.md) for detailed step-by-step instructions.
+
+## Prerequisites
+
+- **Python 3.7+**
+- **Node.js 16+**
+- **MongoDB 5.0+** (local or Atlas)
+
+## Running the Simulator
+
+Generate realistic container tracking data:
+
+```bash
+source venv/bin/activate
+python simulator/simulator.py -n 50 -s 3600
+```
+
+Options:
+- `-n, --num-containers`: Number of containers (default: 50)
+- `-s, --speed`: Simulation speed multiplier (default: 60, use 3600 for faster demo)
+
+## Project Structure
 
 ```
 GeoFence/
 ├── app/
-│   ├── backend/          # FastAPI backend
-│   │   ├── main.py        # API endpoints
-│   │   └── requirements.txt
-│   └── frontend/          # React frontend
-│       ├── src/
-│       │   ├── components/
-│       │   └── services/
-│       └── package.json
-├── generate_locations.py  # Location data generator
-├── generate_containers.py # Container data generator
-├── monitor_containers.py  # Change stream monitor
-└── requirements.txt       # Python dependencies
+│   ├── backend/           # FastAPI REST API
+│   │   └── main_zim.py    # Main API (Zim-specific)
+│   └── frontend/          # React + Vite web app
+│       └── src/components/
+├── simulator/             # Container shipping simulator
+│   ├── simulator.py       # Main orchestrator
+│   ├── data/              # Chokepoints & water regions
+│   └── core/              # Route generation, events
+├── Zim Data/              # Customer geofence data
+│   └── Geofences.geojson  # 1,153 real Zim geofences
+├── setup.sh               # Automated setup script
+├── docker-compose.yml     # Docker deployment
+└── CLAUDE.md              # Detailed developer guide
 ```
 
-## Prerequisites
+## Web Application Pages
 
-- Python 3.7+
-- Node.js 16+ and npm
-- MongoDB 5.0+ (for TimeSeries collections support)
-- MongoDB Atlas account (for Atlas Search features)
-
-## Installation
-
-### 1. Clone the Repository
-
-```bash
-git clone <your-repo-url>
-cd GeoFence
-```
-
-### 2. Backend Setup
-
-```bash
-# Install Python dependencies
-pip install -r requirements.txt
-pip install -r app/backend/requirements.txt
-
-# Create .env file with MongoDB connection string
-# Option 1: Use MongoDB Atlas (production)
-echo "MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority" > .env
-
-# Option 2: Use localhost MongoDB (debug mode)
-echo "DEBUG=true" > .env
-echo "MONGODB_URI=mongodb://localhost:27017" >> .env
-```
-
-**Debug Mode:**
-- Set `DEBUG=true` in your `.env` file to use localhost MongoDB
-- When DEBUG is enabled, the app will use `mongodb://localhost:27017` by default
-- Useful for local development without Atlas
-
-### 3. Frontend Setup
-
-```bash
-cd app/frontend
-npm install
-```
-
-## Quick Start
-
-### 1. Generate Location Data
-
-```bash
-# Generate 300,000 locations (ports, terminals, facilities)
-python generate_locations.py geofence locations 300000
-
-# Create optimized indexes
-python create_indexes.py
-```
-
-### 2. Generate Container Data
-
-```bash
-# Generate TimeSeries container data
-python generate_containers.py geofence containers 1000000 7
-
-# Or generate regular collection data
-python generate_containers.py geofence containers_regular 1000000 7
-```
-
-### 3. Set Up Atlas Search (Optional)
-
-```bash
-cd app/backend
-python create_atlas_search_index.py
-# Follow instructions to create the "default" search index
-```
-
-### 4. Start the Application
-
-**Backend:**
-```bash
-cd app/backend
-python main.py
-# Backend runs on http://localhost:8000
-```
-
-**Frontend:**
-```bash
-cd app/frontend
-npm run dev
-# Frontend runs on http://localhost:3000
-```
-
-### 5. Start Alert Monitor (Optional)
-
-```bash
-python monitor_containers.py
-# Monitors new container insertions and creates alerts
-```
-
-## Usage
-
-### Web Application
-
-1. **Container Tracker** (`/`)
-   - Enter a container ID to track its movement
-   - View route on interactive map
-   - Filter by date range
-
-2. **Alerts Grid** (`/alerts`)
-   - View all system alerts
-   - Filter by container ID, location, date range
-   - Acknowledge alerts
-
-3. **Location Search** (`/location`)
-   - Search locations by name, city, or country (autocomplete)
-   - Select location and search for containers
-   - Compare Regular vs TimeSeries collection performance
-   - View query execution times
-   - Display results on map
-
-### Data Generation Scripts
-
-#### Generate Locations
-
-```bash
-python generate_locations.py [database] [collection] [num_facilities]
-```
-
-**Example:**
-```bash
-python generate_locations.py geofence locations 300000
-```
-
-**Features:**
-- Creates ~20 major ports worldwide
-- Creates ~15 major train terminals
-- Generates 300,000+ industrial facilities
-- 70% weighted distribution, 30% uniform
-- ~25% Polygon geometries, 75% Point geometries
-- Automatic 2dsphere index creation
-
-#### Generate Containers
-
-```bash
-python generate_containers.py [database] [collection] [num_containers] [days]
-```
-
-**Example:**
-```bash
-# TimeSeries collection
-python generate_containers.py geofence containers 1000000 7
-
-# Regular collection
-python generate_containers.py geofence containers_regular 1000000 7
-```
-
-**Features:**
-- Creates TimeSeries or regular collection
-- Generates readings every 15 minutes
-- Realistic shipping routes between ports
-- Container metadata (ID, shipping line, type, etc.)
-- Automatic index creation
+| Page | Description |
+|------|-------------|
+| **Live Map** | Real-time container positions with geofence overlays |
+| **Geofences** | Manage terminals, depots, rail ramps (CRUD + export) |
+| **Events** | IoT event log with filters |
+| **Track Container** | Individual container journey tracking |
+| **Admin** | System administration |
 
 ## API Endpoints
 
-### Container Tracking
-- `GET /api/containers/{container_id}/track` - Track container movement
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/geofences` | GET | List all geofences |
+| `/api/geofences` | POST | Create geofence |
+| `/api/iot-events` | GET | List IoT events (paginated) |
+| `/api/iot-events/latest` | GET | Latest events for live map |
+| `/api/gate-events` | GET | Geofence entry/exit events |
+| `/api/containers/positions/latest` | GET | Latest container positions |
 
-### Alerts
-- `GET /api/alerts` - Get all alerts (with filters)
-- `POST /api/alerts/{alert_id}/acknowledge` - Acknowledge alert
+Full API docs: **http://localhost:8000/docs**
 
-### Locations
-- `GET /api/locations` - Search locations (with autocomplete)
-- `GET /api/locations/static` - Get 10 static locations
-- `GET /api/locations/{location_name}/containers` - Get containers at location (Regular)
-- `GET /api/locations/{location_name}/containers/timeseries` - Get containers at location (TimeSeries)
+## Data Format
 
-### Statistics
-- `GET /api/stats` - Get system statistics
-
-## Data Structure
-
-### Locations Collection
-
+### IoT Event (Zim Format)
 ```json
 {
-  "name": "Port of Shanghai",
-  "type": "port",
-  "city": "Shanghai",
-  "country": "China",
-  "location": {
-    "type": "Point",
-    "coordinates": [121.4737, 31.2304]
-  },
-  "capacity": 25000
+  "TrackerID": "A0000669",
+  "assetname": "ZIMU3170479",
+  "EventTime": "2024-12-31T15:49:39",
+  "EventType": "Motion Stop",
+  "Lat": 19.225322,
+  "Lon": -96.219475,
+  "EventLocation": "MXVER-DCO"
 }
 ```
 
-### Containers Collection (TimeSeries)
-
+### Geofence
 ```json
 {
-  "metadata": {
-    "container_id": "ABCD1234567",
-    "shipping_line": "Maersk",
-    "container_type": "refrigerated",
-    "refrigerated": true
-  },
-  "timestamp": ISODate("2024-01-01T12:00:00Z"),
-  "location": {
-    "type": "Point",
-    "coordinates": [-118.2642, 33.7420]
-  },
-  "weight_kg": 15000,
-  "temperature_celsius": -18.5,
-  "speed_knots": 22.3,
-  "status": "in_transit"
-}
-```
-
-### Alerts Collection
-
-```json
-{
-  "container_id": "ABCD1234567",
-  "location_name": "Port of Shanghai",
-  "location_id": ObjectId("..."),
-  "timestamp": ISODate("2024-01-01T12:00:00Z"),
-  "container_location": {
-    "type": "Point",
-    "coordinates": [121.4737, 31.2304]
-  },
-  "acknowledged": false,
-  "created_at": ISODate("2024-01-01T12:00:00Z")
-}
-```
-
-## Geospatial Queries
-
-### Find Containers at Location
-
-See `find_containers_at_location.py` and `AGGREGATION_EXAMPLES.md` for detailed examples.
-
-**Point Location (with radius):**
-```javascript
-{
-  $geoNear: {
-    near: { type: "Point", coordinates: [lon, lat] },
-    distanceField: "distance",
-    maxDistance: 10000, // meters
-    spherical: true,
-    key: "location" // Required for TimeSeries
+  "name": "USSAV-TGC",
+  "typeId": "Terminal",
+  "UNLOCode": "USSAV",
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [[[...], ...]]
   }
 }
 ```
-
-**Polygon Location:**
-```javascript
-{
-  location: {
-    $geoWithin: {
-      $geometry: polygonGeometry
-    }
-  }
-}
-```
-
-## Alert System
-
-The alert system uses MongoDB Change Streams to monitor new container insertions and check if they're within location polygons.
-
-**Start Monitor:**
-```bash
-python monitor_containers.py
-```
-
-See `ALERT_SYSTEM.md` for detailed documentation.
-
-## Performance
-
-- **Query Time Display**: Both Regular and TimeSeries searches display execution time
-- **Timeout**: Frontend API timeout set to 5 minutes for long-running queries
-- **Indexes**: Automatic creation of geospatial and metadata indexes
-- **Batch Processing**: Data generation uses batch inserts for efficiency
 
 ## Configuration
 
-### Environment Variables
-
-Create a `.env` file in the root directory:
+Copy `.env.example` to `.env` and configure:
 
 ```bash
-MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority
+# Local MongoDB
+MONGODB_URI=mongodb://localhost:27017
+DB_NAME=zim_geofence
+DEBUG=true
+
+# Or MongoDB Atlas
+MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/
 ```
-
-### Atlas Search Setup
-
-1. Create a search index named "default" in MongoDB Atlas
-2. Configure autocomplete on `name`, `city`, and `country` fields
-3. See `app/backend/ATLAS_SEARCH_SETUP.md` for details
 
 ## Documentation
 
-- `AGGREGATION_EXAMPLES.md` - Geospatial aggregation examples
-- `ALERT_SYSTEM.md` - Alert system documentation
-- `app/backend/ATLAS_SEARCH_SETUP.md` - Atlas Search setup guide
+- [DEMO_SETUP_INSTRUCTIONS.md](DEMO_SETUP_INSTRUCTIONS.md) - Detailed setup guide
+- [CLAUDE.md](CLAUDE.md) - Comprehensive developer guide
+- [ALERT_SYSTEM.md](ALERT_SYSTEM.md) - Alert system documentation
+- [AGGREGATION_EXAMPLES.md](AGGREGATION_EXAMPLES.md) - Geospatial query examples
 
 ## Technologies
 
-- **Backend**: FastAPI, Python, PyMongo
-- **Frontend**: React, Vite, Leaflet, Axios
-- **Database**: MongoDB (Atlas or self-hosted)
-- **Search**: MongoDB Atlas Search
+| Layer | Stack |
+|-------|-------|
+| Backend | FastAPI, Python 3.11, PyMongo |
+| Frontend | React 18, Vite 5, Leaflet |
+| Database | MongoDB 7.0, TimeSeries Collections |
+| Styling | Custom CSS with Zim branding |
 
 ## License
 

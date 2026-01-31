@@ -1,0 +1,90 @@
+# =============================================================================
+# ZIM GeoFence - Docker Compose
+# =============================================================================
+# Quick start with Docker:
+#   docker-compose up -d
+#
+# This will start:
+#   - MongoDB (port 27017)
+#   - Backend API (port 8000)
+#   - Frontend (port 3000)
+#
+# To import geofence data after starting:
+#   docker-compose exec backend python simulator/import_geofences.py
+#
+# To run the simulator:
+#   docker-compose exec backend python simulator/simulator.py -n 50 -s 3600
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # ===========================================================================
+  # MongoDB Database
+  # ===========================================================================
+  mongodb:
+    image: mongo:7.0
+    container_name: zim-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: zim_geofence
+    volumes:
+      - mongodb_data:/data/db
+    command: mongod --replSet rs0
+    healthcheck:
+      test: |
+        mongosh --eval "try { rs.status() } catch (e) { rs.initiate() }"
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ===========================================================================
+  # Backend API (FastAPI)
+  # ===========================================================================
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: zim-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017
+      - DB_NAME=zim_geofence
+      - DEBUG=true
+    volumes:
+      - .:/app
+      - ./Zim Data:/app/Zim Data:ro
+    working_dir: /app
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    command: python app/backend/main_zim.py
+
+  # ===========================================================================
+  # Frontend (React + Vite)
+  # ===========================================================================
+  frontend:
+    build:
+      context: ./app/frontend
+      dockerfile: Dockerfile.frontend
+    container_name: zim-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    volumes:
+      - ./app/frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    command: npm run dev -- --host 0.0.0.0
+
+volumes:
+  mongodb_data:
+    driver: local
