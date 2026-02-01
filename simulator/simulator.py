@@ -19,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from simulator.config import (
     SIMULATION_SPEED, EVENT_INTERVAL_SECONDS,
-    ContainerState, VESSEL_SPEED_AVG, TRUCK_SPEED_AVG, RAIL_SPEED_AVG
+    ContainerState, VESSEL_SPEED_AVG, TRUCK_SPEED_AVG, RAIL_SPEED_AVG,
+    STAGGER_SLOTS, LOOP_INTERVAL_SECONDS, DEFAULT_NUM_CONTAINERS
 )
 from simulator.models.container import Container, ContainerMetadata
 from simulator.models.vessel import Vessel
@@ -36,14 +37,16 @@ class ContainerSimulator:
 
     def __init__(
         self,
-        num_containers: int = 50,
+        num_containers: int = DEFAULT_NUM_CONTAINERS,
         simulation_speed: float = SIMULATION_SPEED,
-        start_time: Optional[datetime] = None
+        start_time: Optional[datetime] = None,
+        num_slots: int = STAGGER_SLOTS
     ):
         self.num_containers = num_containers
         self.simulation_speed = simulation_speed
         self.start_time = start_time or datetime.utcnow()
         self.sim_time = self.start_time
+        self.num_slots = num_slots
 
         # Components
         self.db_handler = DatabaseHandler()
@@ -57,6 +60,10 @@ class ContainerSimulator:
         self.vessels: List[Vessel] = []
         self.running = False
         self.events_generated = 0
+
+        # Staggered processing
+        self.current_slot = 0
+        self.containers_by_slot: dict[int, List[Container]] = {i: [] for i in range(self.num_slots)}
 
     def setup(self):
         """Initialize database and load geofences."""
@@ -95,8 +102,17 @@ class ContainerSimulator:
     def _create_containers(self):
         """Create initial containers with assigned journeys."""
         rail_count = 0
+        batch_size = 1000  # Batch DB writes for performance
+        container_batch = []
+
+        print(f"  Creating {self.num_containers:,} containers across {self.num_slots} time slots...")
+        print(f"  (~{self.num_containers // self.num_slots:,} containers per slot)")
+
         for i in range(self.num_containers):
             container = Container()
+
+            # Assign report slot (distribute evenly across all slots)
+            container.report_slot = i % self.num_slots
 
             # Assign a journey
             try:
@@ -129,23 +145,31 @@ class ContainerSimulator:
                             container.origin_depot, container.origin_terminal
                         )
 
-                # Stagger journey start times
-                container.journey_start_time = self.sim_time + timedelta(hours=random.randint(0, 48))
+                # Stagger journey start times (0-4 hours spread for faster startup)
+                container.journey_start_time = self.sim_time + timedelta(hours=random.randint(0, 4))
                 container.last_event_time = container.journey_start_time
 
                 self.containers.append(container)
+                self.containers_by_slot[container.report_slot].append(container)
+                container_batch.append(container)
 
-                # Save to database
-                self.db_handler.update_container(container)
+                # Batch save to database
+                if len(container_batch) >= batch_size:
+                    self.db_handler.update_containers_batch(container_batch)
+                    container_batch = []
 
-                if (i + 1) % 10 == 0:
-                    print(f"  Created {i + 1}/{self.num_containers} containers")
+                if (i + 1) % 10000 == 0:
+                    print(f"  Created {i + 1:,}/{self.num_containers:,} containers")
 
             except Exception as e:
                 print(f"  Error creating container {i + 1}: {e}")
 
+        # Save remaining batch
+        if container_batch:
+            self.db_handler.update_containers_batch(container_batch)
+
         if rail_count > 0:
-            print(f"  {rail_count}/{self.num_containers} containers will use rail routing")
+            print(f"  {rail_count:,}/{self.num_containers:,} containers will use rail routing")
 
     def _advance_simulation_time(self, real_elapsed_seconds: float):
         """Advance simulation time based on real elapsed time and speed."""
@@ -221,6 +245,9 @@ class ContainerSimulator:
                     ))
                     container.is_moving = True
 
+                # Update position in DB (for live map tracking)
+                self.db_handler.update_container(container)
+
             elif container.current_route and container.route_index >= len(container.current_route) - 1:
                 # Reached destination
                 if container.is_moving:
@@ -228,6 +255,8 @@ class ContainerSimulator:
                         container, self.sim_time, current_geofence
                     ))
                     container.is_moving = False
+                    # Save movement state to DB
+                    self.db_handler.update_container(container)
 
                 # Transition to next state
                 self._transition_container_state(container)
@@ -368,11 +397,15 @@ class ContainerSimulator:
             print(f"Error assigning new journey: {e}")
 
     def run(self):
-        """Main simulation loop."""
+        """Main simulation loop with staggered container processing."""
         self.running = True
         print("\n" + "=" * 60)
-        print("SIMULATION STARTED")
+        print("SIMULATION STARTED (Staggered Mode)")
         print("=" * 60)
+        print(f"  Total containers: {len(self.containers):,}")
+        print(f"  Time slots: {self.num_slots}")
+        print(f"  Containers per slot: ~{len(self.containers) // self.num_slots:,}")
+        print(f"  Event interval: {EVENT_INTERVAL_SECONDS // 60} minutes (sim time)")
         print(f"Press Ctrl+C to stop\n")
 
         last_status_time = time.time()
@@ -381,9 +414,11 @@ class ContainerSimulator:
         while self.running:
             loop_start = time.time()
 
-            # Update all containers
+            # Update only containers in current slot (staggered processing)
             all_events = []
-            for container in self.containers:
+            slot_containers = self.containers_by_slot.get(self.current_slot, [])
+
+            for container in slot_containers:
                 events = self._update_container(container)
                 all_events.extend(events)
 
@@ -392,42 +427,144 @@ class ContainerSimulator:
                 self.db_handler.write_events(all_events)
                 self.events_generated += len(all_events)
 
+            # Advance to next slot (wrap around)
+            self.current_slot = (self.current_slot + 1) % self.num_slots
+
             # Print periodic status
             if time.time() - last_status_time > status_interval:
                 self._print_status()
                 last_status_time = time.time()
 
-            # Calculate sleep time to maintain simulation speed
+            # Calculate sleep time to maintain target loop interval
             loop_duration = time.time() - loop_start
-            sleep_time = max(0, 1.0 - loop_duration)  # Target 1 second per loop
+            sleep_time = max(0, LOOP_INTERVAL_SECONDS - loop_duration)
 
             time.sleep(sleep_time)
 
             # Advance simulation time
-            self._advance_simulation_time(1.0)
+            self._advance_simulation_time(LOOP_INTERVAL_SECONDS)
 
     def _print_status(self):
         """Print current simulation status."""
         states = {}
         rail_count = 0
+        moving_count = 0
         for c in self.containers:
             states[c.state] = states.get(c.state, 0) + 1
             if c.use_rail:
                 rail_count += 1
+            if c.is_moving:
+                moving_count += 1
 
-        print(f"\n[{self.sim_time.strftime('%Y-%m-%d %H:%M')}] Events: {self.events_generated}")
-        print(f"  Container states (rail: {rail_count}):")
+        print(f"\n[{self.sim_time.strftime('%Y-%m-%d %H:%M')}] Slot: {self.current_slot}/{self.num_slots}")
+        print(f"  Total events: {self.events_generated:,} | Containers: {len(self.containers):,} | Moving: {moving_count:,}")
+        print(f"  Rail routing: {rail_count:,}")
+        print(f"  Container states:")
         for state, count in sorted(states.items()):
             short_state = state.replace("at_", "").replace("in_transit_", "→").replace("_rail_ramp", "_rail").replace("_to_", "_")
-            print(f"    {short_state}: {count}")
+            print(f"    {short_state}: {count:,}")
 
-    def stop(self):
+    def load_state(self, filepath: str = "simulation_state.json") -> bool:
+        """Load simulation state from a JSON file."""
+        import json
+        from pathlib import Path
+
+        if not Path(filepath).exists():
+            print(f"State file not found: {filepath}")
+            return False
+
+        print(f"\nLoading simulation state from: {filepath}")
+
+        with open(filepath, 'r') as f:
+            state = json.load(f)
+
+        self.sim_time = datetime.fromisoformat(state["sim_time"])
+        self.current_slot = state["current_slot"]
+        self.events_generated = state["events_generated"]
+        self.num_slots = state.get("num_slots", self.num_slots)
+        self.simulation_speed = state.get("simulation_speed", self.simulation_speed)
+
+        # Rebuild containers_by_slot
+        self.containers_by_slot = {i: [] for i in range(self.num_slots)}
+
+        # Restore container states from saved data
+        container_map = {c["container_id"]: c for c in state["containers"]}
+
+        for container in self.containers:
+            saved = container_map.get(container.metadata.container_id)
+            if saved:
+                container.state = saved["state"]
+                container.report_slot = saved["report_slot"]
+                container.latitude = saved["latitude"]
+                container.longitude = saved["longitude"]
+                container.is_moving = saved["is_moving"]
+                container.route_index = saved["route_index"]
+                container.use_rail = saved["use_rail"]
+                container.current_geofence = saved["current_geofence"]
+                if saved["journey_start_time"]:
+                    container.journey_start_time = datetime.fromisoformat(saved["journey_start_time"])
+                if saved["last_event_time"]:
+                    container.last_event_time = datetime.fromisoformat(saved["last_event_time"])
+
+            self.containers_by_slot[container.report_slot].append(container)
+
+        print(f"  - Restored {len(self.containers):,} containers")
+        print(f"  - Sim time: {self.sim_time}")
+        print(f"  - Current slot: {self.current_slot}")
+        print(f"  - Events generated: {self.events_generated:,}")
+
+        return True
+
+    def save_state(self, filepath: str = "simulation_state.json"):
+        """Save simulation state to a JSON file for later resumption."""
+        import json
+
+        state = {
+            "sim_time": self.sim_time.isoformat(),
+            "current_slot": self.current_slot,
+            "events_generated": self.events_generated,
+            "num_slots": self.num_slots,
+            "simulation_speed": self.simulation_speed,
+            "containers": []
+        }
+
+        for c in self.containers:
+            container_state = {
+                "container_id": c.metadata.container_id,
+                "tracker_id": c.metadata.tracker_id,
+                "asset_id": c.metadata.asset_id,
+                "state": c.state,
+                "report_slot": c.report_slot,
+                "latitude": c.latitude,
+                "longitude": c.longitude,
+                "is_moving": c.is_moving,
+                "route_index": c.route_index,
+                "use_rail": c.use_rail,
+                "current_geofence": c.current_geofence,
+                "journey_start_time": c.journey_start_time.isoformat() if c.journey_start_time else None,
+                "last_event_time": c.last_event_time.isoformat() if c.last_event_time else None,
+            }
+            state["containers"].append(container_state)
+
+        with open(filepath, 'w') as f:
+            json.dump(state, f)
+
+        print(f"\nSimulation state saved to: {filepath}")
+        print(f"  - Containers: {len(state['containers']):,}")
+        print(f"  - Sim time: {self.sim_time}")
+        print(f"  - Events generated: {self.events_generated:,}")
+
+    def stop(self, save_state: bool = False, state_file: str = "simulation_state.json"):
         """Stop the simulation."""
         self.running = False
         print("\n" + "=" * 60)
         print("SIMULATION STOPPED")
         print("=" * 60)
         print(f"Total events generated: {self.events_generated}")
+
+        # Save state if requested
+        if save_state:
+            self.save_state(state_file)
 
         # Print final stats
         stats = self.db_handler.get_stats()
@@ -444,8 +581,8 @@ def main():
     parser.add_argument(
         "-n", "--num-containers",
         type=int,
-        default=50,
-        help="Number of containers to simulate (default: 50)"
+        default=DEFAULT_NUM_CONTAINERS,
+        help=f"Number of containers to simulate (default: {DEFAULT_NUM_CONTAINERS:,})"
     )
     parser.add_argument(
         "-s", "--speed",
@@ -457,6 +594,28 @@ def main():
         "--start-date",
         type=str,
         help="Start date for simulation (ISO format, default: now)"
+    )
+    parser.add_argument(
+        "--slots",
+        type=int,
+        default=STAGGER_SLOTS,
+        help=f"Number of time slots for staggered processing (default: {STAGGER_SLOTS})"
+    )
+    parser.add_argument(
+        "--save-state",
+        action="store_true",
+        help="Save simulation state on exit (for resuming later)"
+    )
+    parser.add_argument(
+        "--state-file",
+        type=str,
+        default="simulation_state.json",
+        help="File path for saving/loading simulation state"
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from a previously saved simulation state"
     )
 
     args = parser.parse_args()
@@ -470,13 +629,14 @@ def main():
     simulator = ContainerSimulator(
         num_containers=args.num_containers,
         simulation_speed=args.speed,
-        start_time=start_time
+        start_time=start_time,
+        num_slots=args.slots
     )
 
-    # Handle Ctrl+C gracefully
+    # Handle Ctrl+C gracefully - save state if requested
     def signal_handler(sig, frame):
         print("\n\nReceived shutdown signal...")
-        simulator.stop()
+        simulator.stop(save_state=args.save_state, state_file=args.state_file)
         sys.exit(0)
 
     signal.signal(signal.SIGINT, signal_handler)
@@ -484,6 +644,11 @@ def main():
 
     # Setup and run
     if simulator.setup():
+        # Resume from saved state if requested
+        if args.resume:
+            if not simulator.load_state(args.state_file):
+                print("Warning: Could not load state, starting fresh")
+
         simulator.run()
     else:
         print("\nSetup failed. Please check the errors above.")

@@ -179,8 +179,14 @@ export const containersAPI = {
     return api.get(`/containers/${encodeURIComponent(containerId)}`)
   },
 
-  positions: () => {
-    return api.get('/containers/positions/latest')
+  positions: (limit = 500, movingOnly = false, inGeofenceOnly = false) => {
+    return api.get('/containers/positions/latest', {
+      params: {
+        limit,
+        moving_only: movingOnly,
+        in_geofence_only: inGeofenceOnly
+      }
+    })
   }
 }
 

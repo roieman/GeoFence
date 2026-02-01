@@ -42,20 +42,27 @@ function ContainerTracker() {
   }
 
   const getMapCenter = () => {
-    if (data?.movements?.length > 0) {
-      const first = data.movements[0].location.coordinates
-      return [first[1], first[0]] // [lat, lon]
+    if (data?.events?.length > 0) {
+      const first = data.events[0]
+      if (first.location?.coordinates) {
+        return [first.location.coordinates[1], first.location.coordinates[0]]
+      }
+      if (first.Lat && first.Lon) {
+        return [first.Lat, first.Lon]
+      }
     }
     return [31.2304, 121.4737] // Default to Shanghai
   }
 
   const getPolylinePositions = () => {
-    if (!data?.movements) return []
-    return data.movements
-      .filter(m => m.location?.coordinates)
-      .map(m => {
-        const [lon, lat] = m.location.coordinates
-        return [lat, lon]
+    if (!data?.events) return []
+    return data.events
+      .filter(e => e.location?.coordinates || (e.Lat && e.Lon))
+      .map(e => {
+        if (e.location?.coordinates) {
+          return [e.location.coordinates[1], e.location.coordinates[0]]
+        }
+        return [e.Lat, e.Lon]
       })
   }
 
@@ -114,19 +121,16 @@ function ContainerTracker() {
                 <strong>Container ID:</strong> {data.container_id}
               </div>
               <div>
-                <strong>Shipping Line:</strong> {data.metadata?.shipping_line || 'N/A'}
+                <strong>Tracker ID:</strong> {data.events?.[0]?.TrackerID || 'N/A'}
               </div>
               <div>
-                <strong>Type:</strong> {data.metadata?.container_type || 'N/A'}
+                <strong>Total Events:</strong> {data.count || data.events?.length || 0}
               </div>
               <div>
-                <strong>Refrigerated:</strong> {data.metadata?.refrigerated ? 'Yes' : 'No'}
+                <strong>First Event:</strong> {data.events?.[0]?.EventTime ? format(new Date(data.events[0].EventTime), 'PPpp') : 'N/A'}
               </div>
               <div>
-                <strong>Cargo Type:</strong> {data.metadata?.cargo_type || 'N/A'}
-              </div>
-              <div>
-                <strong>Total Readings:</strong> {data.total_readings}
+                <strong>Last Event:</strong> {data.events?.length > 0 ? format(new Date(data.events[data.events.length - 1].EventTime), 'PPpp') : 'N/A'}
               </div>
             </div>
           </div>
@@ -134,14 +138,18 @@ function ContainerTracker() {
           <div className="card" style={{ padding: 0, height: '600px' }}>
             <MapContainer
               center={getMapCenter()}
-              zoom={data.movements?.length > 0 ? 8 : 2}
+              zoom={data.events?.length > 0 ? 6 : 2}
               style={{ height: '100%', width: '100%' }}
+              maxBounds={[[-90, -180], [90, 180]]}
+              maxBoundsViscosity={1.0}
+              minZoom={2}
             >
               <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                noWrap={true}
               />
-              {data.movements?.length > 0 && (
+              {data.events?.length > 0 && (
                 <>
                   <Polyline
                     positions={getPolylinePositions()}
@@ -149,12 +157,14 @@ function ContainerTracker() {
                     weight={3}
                     opacity={0.7}
                   />
-                  {data.movements.map((movement, idx) => {
-                    if (!movement.location?.coordinates) return null
-                    const [lon, lat] = movement.location.coordinates
+                  {data.events.map((event, idx) => {
+                    const lat = event.location?.coordinates?.[1] || event.Lat
+                    const lon = event.location?.coordinates?.[0] || event.Lon
+                    if (!lat || !lon) return null
+
                     const isFirst = idx === 0
-                    const isLast = idx === data.movements.length - 1
-                    
+                    const isLast = idx === data.events.length - 1
+
                     return (
                       <Marker
                         key={idx}
@@ -173,17 +183,13 @@ function ContainerTracker() {
                       >
                         <Popup>
                           <div>
-                            <strong>{isFirst ? 'Start' : isLast ? 'End' : `Point ${idx + 1}`}</strong>
+                            <strong>{isFirst ? 'Start' : isLast ? 'Latest' : `Point ${idx + 1}`}</strong>
                             <br />
-                            Time: {movement.timestamp ? format(new Date(movement.timestamp), 'PPpp') : 'N/A'}
+                            Time: {event.EventTime ? format(new Date(event.EventTime), 'PPpp') : 'N/A'}
                             <br />
-                            Status: {movement.status || 'N/A'}
-                            {movement.speed_knots && (
-                              <>
-                                <br />
-                                Speed: {movement.speed_knots.toFixed(1)} knots
-                              </>
-                            )}
+                            Event: {event.EventType || 'N/A'}
+                            <br />
+                            Location: {event.EventLocation || 'In Transit'}
                           </div>
                         </Popup>
                       </Marker>

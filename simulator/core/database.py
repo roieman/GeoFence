@@ -24,12 +24,14 @@ class DatabaseHandler:
         self.db: Optional[Database] = None
 
     def connect(self):
-        """Establish database connection."""
+        """Establish database connection with connection pooling for high throughput."""
         print(f"Connecting to MongoDB: {self.uri[:50]}...")
         self.client = MongoClient(
             self.uri,
             serverSelectionTimeoutMS=5000,
             connectTimeoutMS=10000,
+            maxPoolSize=50,  # Connection pool for high throughput
+            minPoolSize=10,
         )
 
         # Test connection
@@ -177,6 +179,29 @@ class DatabaseHandler:
             {"$set": container.to_dict()},
             upsert=True
         )
+
+    def update_containers_batch(self, containers: list):
+        """
+        Batch update or insert multiple containers using bulk_write for performance.
+        """
+        if self.db is None:
+            raise RuntimeError("Database not connected.")
+
+        if not containers:
+            return
+
+        from pymongo import UpdateOne
+
+        operations = [
+            UpdateOne(
+                {"container_id": c.metadata.container_id},
+                {"$set": c.to_dict()},
+                upsert=True
+            )
+            for c in containers
+        ]
+
+        self.db[COLLECTIONS["containers"]].bulk_write(operations, ordered=False)
 
     def update_vessel(self, vessel):
         """

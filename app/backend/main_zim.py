@@ -1219,16 +1219,41 @@ async def get_container(container_id: str):
 
 
 @app.get("/api/containers/positions/latest")
-async def get_container_positions():
-    """Get latest position of all containers (for live map)."""
+async def get_container_positions(
+    limit: int = Query(500, ge=1, le=5000, description="Max containers to return"),
+    moving_only: bool = Query(False, description="Only return moving containers"),
+    in_geofence_only: bool = Query(False, description="Only return containers in geofences")
+):
+    """Get latest position of containers (for live map). Limited for performance."""
     try:
+        query = {}
+        if moving_only:
+            query["is_moving"] = True
+        if in_geofence_only:
+            query["current_geofence"] = {"$ne": None}
+
+        # Get total count for stats
+        total_count = containers.count_documents({})
+        moving_count = containers.count_documents({"is_moving": True})
+        in_geofence_count = containers.count_documents({"current_geofence": {"$ne": None}})
+
         cursor = containers.find(
-            {},
+            query,
             {"container_id": 1, "tracker_id": 1, "latitude": 1, "longitude": 1,
              "state": 1, "is_moving": 1, "current_geofence": 1}
-        )
+        ).limit(limit)
         results = list(cursor)
-        return {"containers": serialize_doc(results)}
+
+        return {
+            "containers": serialize_doc(results),
+            "stats": {
+                "total": total_count,
+                "moving": moving_count,
+                "in_geofence": in_geofence_count,
+                "returned": len(results),
+                "limit": limit
+            }
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

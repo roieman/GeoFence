@@ -26,8 +26,14 @@ COLLECTIONS = {
 
 # Simulator settings
 SIMULATION_SPEED = float(os.getenv("SIMULATION_SPEED", "60"))  # 60x = 1 minute real = 1 hour simulated
-EVENT_INTERVAL_SECONDS = 300  # IoT reports every 5 minutes (in simulation time)
+EVENT_INTERVAL_SECONDS = 900  # IoT reports every 15 minutes (in simulation time)
 DOOR_EVENT_PROBABILITY = 0.3  # 30% chance of door event at stops
+
+# Staggered event generation (for large-scale simulation)
+# With 900 slots and 1-second loops, each container reports once every 15 minutes real-time
+STAGGER_SLOTS = int(os.getenv("STAGGER_SLOTS", "900"))  # Number of time slots (15 min * 60 sec)
+LOOP_INTERVAL_SECONDS = 1.0  # Target loop interval in real seconds
+DEFAULT_NUM_CONTAINERS = int(os.getenv("NUM_CONTAINERS", "100000"))  # Default container count
 
 # Vessel speeds (in knots)
 VESSEL_SPEED_MIN = 12

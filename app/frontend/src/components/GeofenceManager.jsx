@@ -533,10 +533,14 @@ function GeofenceManager() {
           center={[20, 0]}
           zoom={2}
           style={{ height: '100%', width: '100%' }}
+          maxBounds={[[-90, -180], [90, 180]]}
+          maxBoundsViscosity={1.0}
+          minZoom={2}
         >
           <TileLayer
             attribution='&copy; OpenStreetMap'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            noWrap={true}
           />
 
           <DrawControl onCreated={handlePolygonCreated} />

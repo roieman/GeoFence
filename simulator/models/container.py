@@ -45,6 +45,9 @@ class Container:
     metadata: ContainerMetadata = field(default_factory=ContainerMetadata)
     state: str = ContainerState.AT_ORIGIN_DEPOT
 
+    # Staggered reporting slot (for large-scale simulation)
+    report_slot: int = 0  # Assigned slot for staggered event generation
+
     # Current position
     latitude: float = 0.0
     longitude: float = 0.0

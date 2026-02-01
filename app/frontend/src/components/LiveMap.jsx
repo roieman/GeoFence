@@ -37,6 +37,8 @@ function LiveMap() {
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [selectedGeofenceType, setSelectedGeofenceType] = useState('')
   const [stats, setStats] = useState({})
+  const [containerLimit, setContainerLimit] = useState(500)
+  const [movingOnly, setMovingOnly] = useState(false)
 
   // Load initial data
   useEffect(() => {
@@ -48,7 +50,7 @@ function LiveMap() {
     if (!autoRefresh) return
     const interval = setInterval(loadContainersAndEvents, 5000)
     return () => clearInterval(interval)
-  }, [autoRefresh])
+  }, [autoRefresh, containerLimit, movingOnly])
 
   const loadData = async () => {
     setLoading(true)
@@ -74,20 +76,20 @@ function LiveMap() {
   const loadContainersAndEvents = async () => {
     try {
       const [containersRes, eventsRes] = await Promise.all([
-        containersAPI.positions(),
+        containersAPI.positions(containerLimit, movingOnly, false),
         iotEventsAPI.latest(100)
       ])
       setContainers(containersRes.data.containers || [])
       setLatestEvents(eventsRes.data.events || [])
 
-      // Calculate stats
-      const moving = containersRes.data.containers?.filter(c => c.is_moving).length || 0
-      const inGeofence = containersRes.data.containers?.filter(c => c.current_geofence).length || 0
+      // Use stats from backend (accurate counts from DB)
+      const serverStats = containersRes.data.stats || {}
       setStats({
-        total: containersRes.data.containers?.length || 0,
-        moving,
-        stopped: (containersRes.data.containers?.length || 0) - moving,
-        inGeofence
+        total: serverStats.total || 0,
+        moving: serverStats.moving || 0,
+        stopped: (serverStats.total || 0) - (serverStats.moving || 0),
+        inGeofence: serverStats.in_geofence || 0,
+        displayed: serverStats.returned || 0
       })
     } catch (err) {
       console.error('Failed to refresh data:', err)
@@ -123,20 +125,24 @@ function LiveMap() {
         <h2>Live Map</h2>
         <div className="header-stats">
           <span className="stat">
-            <span className="stat-value">{stats.total || 0}</span>
-            <span className="stat-label">Containers</span>
+            <span className="stat-value">{(stats.total || 0).toLocaleString()}</span>
+            <span className="stat-label">Total</span>
           </span>
           <span className="stat stat-moving">
-            <span className="stat-value">{stats.moving || 0}</span>
+            <span className="stat-value">{(stats.moving || 0).toLocaleString()}</span>
             <span className="stat-label">Moving</span>
           </span>
           <span className="stat stat-stopped">
-            <span className="stat-value">{stats.stopped || 0}</span>
+            <span className="stat-value">{(stats.stopped || 0).toLocaleString()}</span>
             <span className="stat-label">Stopped</span>
           </span>
           <span className="stat stat-geofence">
-            <span className="stat-value">{stats.inGeofence || 0}</span>
+            <span className="stat-value">{(stats.inGeofence || 0).toLocaleString()}</span>
             <span className="stat-label">In Geofence</span>
+          </span>
+          <span className="stat" style={{backgroundColor: '#1C2340', color: '#FFD100'}}>
+            <span className="stat-value">{(stats.displayed || 0).toLocaleString()}</span>
+            <span className="stat-label">Displayed</span>
           </span>
         </div>
       </div>
@@ -185,6 +191,25 @@ function LiveMap() {
           <option value="Depot">Depots</option>
           <option value="Rail ramp">Rail Ramps</option>
         </select>
+        <select
+          value={containerLimit}
+          onChange={(e) => { setContainerLimit(Number(e.target.value)); loadContainersAndEvents() }}
+          className="filter-select"
+        >
+          <option value={100}>100 Containers</option>
+          <option value={500}>500 Containers</option>
+          <option value={1000}>1,000 Containers</option>
+          <option value={2000}>2,000 Containers</option>
+          <option value={5000}>5,000 Containers</option>
+        </select>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={movingOnly}
+            onChange={(e) => { setMovingOnly(e.target.checked); loadContainersAndEvents() }}
+          />
+          Moving Only
+        </label>
         <button onClick={loadData} className="btn btn-small">
           Refresh
         </button>
@@ -197,10 +222,14 @@ function LiveMap() {
           center={[20, 0]}
           zoom={2}
           style={{ height: '100%', width: '100%' }}
+          maxBounds={[[-90, -180], [90, 180]]}
+          maxBoundsViscosity={1.0}
+          minZoom={2}
         >
           <TileLayer
             attribution='&copy; OpenStreetMap'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            noWrap={true}
           />
 
           {/* Geofences */}
